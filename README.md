@@ -1,5 +1,7 @@
 # packetfabric-mcp
 
+<!-- mcp-name: io.github.PacketFabric/packetfabric-mcp -->
+
 MCP server for the [PacketFabric API](https://docs.packetfabric.com/api/v2/), built from its OpenAPI spec
 (346 operations, bundled in `src/packetfabric_mcp/data/openapi.yaml`).
 
@@ -33,7 +35,7 @@ Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`).
 ```sh
 cd ~/Documents/src/packetfabric/mcp
 uv sync
-uv run pytest            # 13 offline tests
+uv run pytest            # offline tests
 ```
 
 Get an API key in the PacketFabric portal (Settings → API Keys). API keys work with MFA-enabled accounts;
@@ -79,10 +81,72 @@ To allow provisioning, add `"PF_ALLOW_WRITES": "true"` to `env`. Consider a sepa
 | `PF_SPEC_PATH` | Use a different OpenAPI file |
 | `PF_TIMEOUT`, `PF_MAX_RESPONSE_CHARS` | HTTP timeout (s, default 60) and response size cap (default 60000) |
 
+## Hosted mode (MCP over HTTP + A2A + discovery)
+
+```sh
+uv sync --extra a2a
+PF_PUBLIC_URL=https://mcp.example.com uv run packetfabric-mcp --http --host 0.0.0.0 --port 8765
+# or: docker build -t packetfabric-mcp . && docker run -p 8765:8765 -e PF_PUBLIC_URL=... packetfabric-mcp
+```
+
+| Path | What |
+|---|---|
+| `POST /mcp` | MCP streamable HTTP (stateless, so it scales horizontally) |
+| `GET /mcp/server-card` | [MCP Server Card](https://modelcontextprotocol.io/seps/2127-mcp-server-cards) (SEP-2127) |
+| `GET /.well-known/agent-card.json` | [A2A](https://a2a-protocol.org) v1.0 Agent Card |
+| `POST /a2a` | A2A JSON-RPC endpoint |
+| `GET /.well-known/ai-catalog.json` | [AI Catalog](https://ai-catalog.io) listing both cards |
+| `GET /healthz` | Liveness |
+
+**Every caller uses their own PacketFabric API key**, sent as `Authorization: Bearer <key>` (plus
+`On-Behalf: <customer uuid>` for resellers). The operator's `PF_TOKEN`/`PF_LOGIN` are ignored in HTTP mode
+unless `PF_HTTP_USE_SERVER_CREDENTIALS=true`, which is only safe for a private single-user deployment.
+Put it behind TLS; the discovery documents are public by design and contain no secrets.
+
+The A2A agent is deterministic, not an LLM: send a DataPart `{"skill": "list_ports", "arguments": {"pop": "LAX1"}}`
+and get the API result back as a JSON data artifact. Skills mirror the MCP tools (see the agent card).
+A2A access is always read-only.
+
+```sh
+curl -s https://mcp.example.com/a2a -H 'A2A-Version: 1.0' -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $PF_TOKEN" -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":
+  {"messageId":"1","role":"ROLE_USER","parts":[{"data":{"skill":"find_locations","arguments":{"market":"NYC"}}}]}}}'
+```
+
+| Env var (HTTP mode) | Purpose |
+|---|---|
+| `PF_PUBLIC_URL` | Public https base URL advertised in the cards (otherwise derived from the request) |
+| `PF_HTTP_USE_SERVER_CREDENTIALS` | `true` = fall back to the operator's own credentials (private use only) |
+| `PF_DISABLE_A2A` | `true` = serve MCP only |
+| `PF_ICON_URL` | Icon advertised in the cards |
+
+**Domain-level discovery:** if the server runs on its own host (e.g. `mcp.packetfabric.com`), the
+`/.well-known/` documents are already in the right place. To advertise it from the main domain, serve a copy of
+`/.well-known/ai-catalog.json` from `https://packetfabric.com/.well-known/ai-catalog.json` (the entries hold
+absolute URLs, so a static copy works).
+
+## Publishing
+
+Listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.PacketFabric/packetfabric-mcp` (see `server.json`), installed from PyPI as `packetfabric-mcp`.
+
+1. Bump the version in `pyproject.toml`, `src/packetfabric_mcp/__init__.py` and `server.json`
+   (tests fail if they disagree).
+2. Push a tag `vX.Y.Z`. `.github/workflows/publish.yml` runs the tests, publishes to PyPI (Trusted Publishing),
+   then publishes `server.json` to the MCP Registry using GitHub OIDC.
+3. Once the hosted server is live, set the repo variable `MCP_PUBLIC_URL` and the registry entry will also list it
+   as a remote.
+
+One-time: add a PyPI Trusted Publisher for `packetfabric-mcp` (repo `PacketFabric/public-mcp`, workflow
+`publish.yml`, environment `pypi`). The `mcp-name:` comment at the top of this README is how the registry verifies
+that the PyPI package belongs to this server; keep it.
+
+To publish under `com.packetfabric/...` instead of `io.github.PacketFabric/...`, change `REGISTRY_NAME` in
+`metadata.py` and `server.json`, add the DNS TXT record from `mcp-publisher login dns`, and switch the
+workflow's login step.
+
 ## Other
 
 - Refresh the bundled spec: `uv run packetfabric-mcp --update-spec`
-- Run as a remote HTTP server: `uv run packetfabric-mcp --http --host 0.0.0.0 --port 8765` (serves `/mcp`).
-  Note there's no auth in front of it — put it behind something that has auth before exposing it.
 - To add a curated tool, copy one of the `pf_list_*` functions in `server.py` and point `_run()` at an
-  `operation_id` (find one with `pf_search_endpoints`).
+  `operation_id` (find one with `pf_search_endpoints`). Add a matching entry to `SKILLS` in `a2a_agent.py`.

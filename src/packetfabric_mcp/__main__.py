@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from importlib import resources
 
@@ -28,7 +29,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="packetfabric-mcp", description=__doc__)
     ap.add_argument("--http", action="store_true", help="Serve streamable HTTP instead of stdio")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PF_PORT", "8765")))
+    ap.add_argument("--public-url", default=os.environ.get("PF_PUBLIC_URL"),
+                    help="Public base URL (e.g. https://mcp.example.com) used in discovery documents")
     ap.add_argument("--update-spec", nargs="?", const=SPEC_URL, metavar="URL",
                     help="Download the latest PacketFabric OpenAPI spec into the package and exit")
     args = ap.parse_args()
@@ -37,11 +40,17 @@ def main() -> None:
         _update_spec(args.update_spec)
         return
 
-    from .server import mcp
-
     if args.http:
-        mcp.run("streamable-http", host=args.host, port=args.port)
+        import uvicorn
+
+        from .http_app import build_app
+
+        os.environ.setdefault("PF_PORT", str(args.port))
+        app = build_app(public_url=args.public_url, bind_host=args.host)
+        uvicorn.run(app, host=args.host, port=args.port, proxy_headers=True, forwarded_allow_ips="*")
     else:
+        from .server import mcp
+
         mcp.run()
 
 

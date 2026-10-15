@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -17,6 +19,32 @@ class PFError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class CallerCredentials:
+    """Credentials supplied by whoever is calling us over HTTP (MCP or A2A)."""
+
+    token: str | None
+    on_behalf: str | None = None
+
+
+# Set per request by the HTTP front ends; unset (None) for stdio.
+caller_credentials: ContextVar[CallerCredentials | None] = ContextVar("pf_caller_credentials", default=None)
+
+
+def credentials_from_headers(headers: Any) -> CallerCredentials | None:
+    """Extract `Authorization: Bearer <PF API key>` (+ optional `On-Behalf`) from request headers."""
+    if not headers:
+        return None
+    get = headers.get
+    auth = get("authorization") or get("Authorization") or ""
+    scheme, _, value = auth.partition(" ")
+    token = value.strip() if scheme.lower() == "bearer" and value.strip() else None
+    on_behalf = get("on-behalf") or get("On-Behalf") or None
+    if not token and not on_behalf:
+        return None
+    return CallerCredentials(token=token, on_behalf=on_behalf)
+
+
 class PacketFabricClient:
     def __init__(self, base_url: str):
         self.base_url = os.environ.get("PF_API_URL", base_url).rstrip("/")
@@ -25,6 +53,8 @@ class PacketFabricClient:
         self._password = os.environ.get("PF_PASSWORD")
         self._static_token = self._token is not None
         self._on_behalf = os.environ.get("PF_ON_BEHALF") or None
+        # Hosted/multi-user mode: never fall back to the operator's own credentials.
+        self.require_caller_token = False
         self._lock = asyncio.Lock()
         self._http = httpx.AsyncClient(
             base_url=self.base_url,
@@ -93,10 +123,23 @@ class PacketFabricClient:
                 v = "true" if v else "false"
             params[k] = v
 
-        token = await self._ensure_token()
         kwargs: dict[str, Any] = {"params": params}
         if body is not None and op.method != "get":
             kwargs["json"] = body
+
+        caller = caller_credentials.get()
+        if caller is not None and caller.token:
+            headers = {"Authorization": f"Bearer {caller.token}"}
+            if caller.on_behalf:
+                headers["On-Behalf"] = caller.on_behalf
+            return await self._http.request(op.method.upper(), path, headers=headers, **kwargs)
+        if self.require_caller_token:
+            raise PFError(
+                "This server needs your own PacketFabric API key. Send it as "
+                "'Authorization: Bearer <api key>' (create one in the portal under Settings > API Keys)."
+            )
+
+        token = await self._ensure_token()
         r = await self._http.request(op.method.upper(), path, headers=self._headers(token), **kwargs)
         if r.status_code == 401 and not self._static_token:
             token = await self._ensure_token(force=True)

@@ -1,0 +1,60 @@
+# Release: bump the version in pyproject.toml, src/packetfabric_mcp/__init__.py and server.json
+# (tests fail if they disagree), then push a tag `vX.Y.Z`.
+#
+# One-time setup:
+#  - PyPI: add a Trusted Publisher for project `packetfabric-mcp` -> this repo, workflow
+#    `publish.yml`, environment `pypi`.
+#  - MCP Registry: nothing; GitHub OIDC from the PacketFabric org proves the
+#    io.github.PacketFabric/* namespace.
+#  - Optional: set repo variable MCP_PUBLIC_URL (e.g. https://mcp.packetfabric.com) once the
+#    hosted server is live; the registry entry then also lists the remote endpoint.
+name: Publish
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Check tag matches version
+        run: |
+          v=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != version $v"; exit 1; }
+      - run: uv sync --group dev --locked
+      - run: uv run pytest -q
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Add hosted endpoint to server.json
+        if: vars.MCP_PUBLIC_URL != ''
+        env:
+          URL: ${{ vars.MCP_PUBLIC_URL }}
+        run: |
+          jq --arg url "${URL%/}/mcp" '.remotes = [{
+              type: "streamable-http", url: $url,
+              headers: [{name: "Authorization", description: "Bearer <your PacketFabric API key>",
+                         isRequired: true, isSecret: true}]
+            }]' server.json > server.tmp && mv server.tmp server.json
+          cat server.json
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - name: Publish (retries while PyPI propagates the new release)
+        run: |
+          for i in 1 2 3 4 5; do ./mcp-publisher publish && exit 0; sleep 30; done; exit 1

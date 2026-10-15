@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.PacketFabric/packetfabric-mcp",
+  "title": "PacketFabric",
+  "description": "Query and manage PacketFabric NaaS: ports, virtual circuits, cloud routers, pricing, metrics.",
+  "version": "0.2.0",
+  "websiteUrl": "https://github.com/PacketFabric/public-mcp",
+  "repository": {
+    "url": "https://github.com/PacketFabric/public-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "packetfabric-mcp",
+      "version": "0.2.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PF_TOKEN",
+          "description": "PacketFabric API key (portal: Settings > API Keys)",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "PF_ALLOW_WRITES",
+          "description": "Set to true to allow create/modify/delete calls (each still needs confirm=true)",
+          "default": "false",
+          "choices": ["true", "false"]
+        },
+        {
+          "name": "PF_ON_BEHALF",
+          "description": "Resellers only: customer UUID to act on behalf of"
+        }
+      ]
+    }
+  ]
+}
