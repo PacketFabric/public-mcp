@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -60,6 +61,9 @@ class PacketFabricClient:
             base_url=self.base_url,
             timeout=httpx.Timeout(float(os.environ.get("PF_TIMEOUT", "60"))),
             headers={"User-Agent": f"packetfabric-mcp/{__version__}", "Accept": "application/json"},
+            # One client serves every caller, so never keep cookies between requests: a session
+            # cookie set for one caller would otherwise be sent on the next caller's request.
+            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
         )
 
     @property

@@ -105,7 +105,8 @@ Put it behind TLS; the discovery documents are public by design and contain no s
 
 The A2A agent is deterministic, not an LLM: send a DataPart `{"skill": "list_ports", "arguments": {"pop": "LAX1"}}`
 and get the API result back as a JSON data artifact. Skills mirror the MCP tools (see the agent card).
-A2A access is always read-only.
+A2A access is always read-only. A2A tasks are private to the API key (and `On-Behalf` customer) that created
+them; requests without a key get a plain reply and nothing is stored.
 
 ```sh
 curl -s https://mcp.example.com/a2a -H 'A2A-Version: 1.0' -H 'Content-Type: application/json' \
@@ -119,6 +120,9 @@ curl -s https://mcp.example.com/a2a -H 'A2A-Version: 1.0' -H 'Content-Type: appl
 | `PF_HTTP_USE_SERVER_CREDENTIALS` | `true` = fall back to the operator's own credentials (private use only) |
 | `PF_DISABLE_A2A` | `true` = serve MCP only |
 | `PF_ICON_URL` | Icon advertised in the cards |
+| `PF_MAX_BODY_BYTES` | Request body cap for non-MCP routes, including `/a2a` (default 1 MiB, 413 above it) |
+| `PF_A2A_TASK_TTL_SECONDS` | How long finished A2A tasks stay retrievable (default 3600) |
+| `PF_A2A_MAX_TASKS` / `PF_A2A_MAX_TASKS_PER_CALLER` | Caps on stored A2A tasks, oldest evicted first (defaults 10000 / 200) |
 
 **Domain-level discovery:** if the server runs on its own host (e.g. `mcp.packetfabric.com`), the
 `/.well-known/` documents are already in the right place. To advertise it from the main domain, serve a copy of

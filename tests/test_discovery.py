@@ -134,12 +134,12 @@ async def test_a2a_skill_uses_callers_key(app, respx_mock):
         assert route.calls.last.request.headers["Authorization"] == "Bearer caller-key"
 
 
-async def test_a2a_without_key_fails_and_never_uses_operator_key(app):
+async def test_a2a_without_key_gets_message_and_never_uses_operator_key(app):
     async with serve(app) as http:
         r = await http.post("/a2a", json=_a2a({"skill": "get_account"}), headers=A2A_HEADERS)
-        task = r.json()["result"]["task"]
-        assert task["status"]["state"] == "TASK_STATE_FAILED"
-        assert "API key" in task["status"]["message"]["parts"][0]["text"]
+        result = r.json()["result"]
+        assert "task" not in result  # no task is created for keyless callers
+        assert "API key" in result["message"]["parts"][0]["text"]
 
 
 async def test_a2a_unknown_skill_gets_help(app):

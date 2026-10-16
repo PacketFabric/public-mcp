@@ -36,6 +36,76 @@ CORS_HEADERS = {
 }
 
 
+MAX_BODY_BYTES = int(os.environ.get("PF_MAX_BODY_BYTES", str(1024 * 1024)))
+
+
+class BodySizeLimit:
+    """Reject request bodies over `max_bytes` with 413: up front from Content-Length, or while
+    reading a streamed body. /mcp is skipped: the MCP SDK enforces its own cap."""
+
+    def __init__(self, app: Any, max_bytes: int, skip_prefix: str = metadata.MCP_PATH) -> None:
+        self.app, self.max_bytes, self.skip_prefix = app, max_bytes, skip_prefix
+
+    def _skip(self, path: str) -> bool:
+        if path == metadata.SERVER_CARD_PATH:
+            return False
+        return path == self.skip_prefix or path.startswith(self.skip_prefix + "/")
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or self._skip(scope.get("path", "")):
+            await self.app(scope, receive, send)
+            return
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                try:
+                    too_big = int(value) > self.max_bytes
+                except ValueError:
+                    too_big = True
+                if too_big:
+                    await self._reject(send)
+                    return
+
+        # No usable Content-Length (e.g. chunked): read the body ourselves, up to the limit, so
+        # an oversized request is refused before any route handler sees it, then replay it.
+        if scope.get("method") in ("POST", "PUT", "PATCH"):
+            chunks: list[bytes] = []
+            seen = 0
+            while True:
+                message = await receive()
+                if message["type"] != "http.request":
+                    break
+                chunk = message.get("body", b"")
+                seen += len(chunk)
+                if seen > self.max_bytes:
+                    await self._reject(send)
+                    return
+                chunks.append(chunk)
+                if not message.get("more_body", False):
+                    break
+            body = b"".join(chunks)
+            replayed = False
+
+            async def replay() -> Any:
+                nonlocal replayed
+                if not replayed:
+                    replayed = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return await receive()
+
+            await self.app(scope, replay, send)
+            return
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _reject(send: Any) -> None:
+        body = b'{"error":"request body too large"}'
+        await send({
+            "type": "http.response.start", "status": 413,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        })  # fmt: skip
+        await send({"type": "http.response.body", "body": body})
+
+
 def _env_true(name: str) -> bool:
     return os.environ.get(name, "").lower() in ("1", "true", "yes", "on")
 
@@ -69,14 +139,13 @@ def build_app(
         try:
             from a2a.server.request_handlers import DefaultRequestHandlerV2
             from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-            from a2a.server.tasks import InMemoryTaskStore
-
             from .a2a_agent import PacketFabricAgentExecutor, build_agent_card
+            from .a2a_store import ScopedTaskStore
 
             # The agent card needs an absolute URL; without PF_PUBLIC_URL fall back to the bind address.
             agent_card = build_agent_card(public_url or f"http://{bind_host}:{os.environ.get('PF_PORT', '8765')}")
             handler = DefaultRequestHandlerV2(
-                agent_executor=PacketFabricAgentExecutor(), task_store=InMemoryTaskStore(), agent_card=agent_card
+                agent_executor=PacketFabricAgentExecutor(), task_store=ScopedTaskStore(), agent_card=agent_card
             )
             a2a_routes = [
                 *create_agent_card_routes(agent_card, cache_control="public, max-age=3600"),
@@ -115,4 +184,5 @@ def build_app(
         Route("/healthz", healthz, methods=["GET"]),
         *a2a_routes,
     ]
+    app.add_middleware(BodySizeLimit, max_bytes=MAX_BODY_BYTES)
     return app

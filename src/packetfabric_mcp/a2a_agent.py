@@ -180,6 +180,13 @@ class PacketFabricAgentExecutor(AgentExecutor):
             await event_queue.enqueue_event(new_text_message(_help_text(error), context_id=context.context_id))
             return
 
+        # No credentials: answer with a plain message so no task (and no owner) is ever created.
+        headers = (context.call_context.state or {}).get("headers") if context.call_context else None
+        creds = credentials_from_headers(headers)
+        if creds is None or not creds.token:
+            await event_queue.enqueue_event(new_text_message(metadata.AUTH_HELP, context_id=context.context_id))
+            return
+
         task = context.current_task or new_task(
             context.task_id, context.context_id, TaskState.TASK_STATE_SUBMITTED, history=[message]
         )
@@ -197,9 +204,7 @@ class PacketFabricAgentExecutor(AgentExecutor):
                 return
             args = {k: v for k, v in args.items() if k != "confirm"}
 
-        headers = (context.call_context.state or {}).get("headers") if context.call_context else None
-        creds = credentials_from_headers(headers)
-        token = caller_credentials.set(creds) if creds else None
+        token = caller_credentials.set(creds)
         try:
             outcome = await server.mcp.call_tool(skill.tool, args)
             result = outcome.content[0].text if outcome.content else ""
@@ -210,8 +215,7 @@ class PacketFabricAgentExecutor(AgentExecutor):
             await updater.failed(updater.new_agent_message([new_text_part(msg)]))
             return
         finally:
-            if token is not None:
-                caller_credentials.reset(token)
+            caller_credentials.reset(token)
 
         try:
             part = new_data_part(json.loads(result), media_type="application/json")
