@@ -1,0 +1,134 @@
+# Build and deploy the hosted server (https://mcp.packetfabric.com).
+#
+# Follows the necron99/c3 pattern: build on the pf-arc-linux runners (which hold GCP
+# credentials via Workload Identity, so no auth step and no service account key), push to
+# gcr.io/packetfabric, then bump the image tag in pf_helm and let Flux apply it.
+#
+# Like c3, the image tag is the release version: a vX.Y.Z tag (the same tag publish.yml
+# ships to PyPI) builds gcr.io/packetfabric/public-mcp:vX.Y.Z and deploys it to prod. A
+# tag already in the registry is not rebuilt. Run it by hand (Actions > deploy > Run
+# workflow) to build a tag that predates this workflow or to redeploy one; untick
+# "deploy" to only build the image.
+name: deploy
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and deploy (e.g. v0.2.2)
+        required: true
+      deploy:
+        description: Bump pf_helm prod to this image once it is pushed
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time; a second tag waits rather than racing pf_helm.
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  IMAGE: gcr.io/packetfabric/public-mcp
+  IMAGE_TAG: ${{ inputs.tag || github.ref_name }}
+  VALUES_FILE: envs/prod-central1-c/public-mcp/values.yaml
+
+jobs:
+  build:
+    runs-on: pf-arc-linux
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.IMAGE_TAG }}
+
+      - name: Check tag matches version
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $IMAGE_TAG is not vX.Y.Z"; exit 1; }
+          v=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          test "v$v" = "$IMAGE_TAG" || { echo "::error::tag $IMAGE_TAG != pyproject version $v"; exit 1; }
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          uv sync --group dev --locked
+          uv run pytest -q
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure docker
+        run: gcloud auth configure-docker gcr.io --quiet
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE:$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "::notice::$IMAGE:$IMAGE_TAG already exists, not rebuilding"
+            exit 0
+          fi
+          docker build --pull \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.revision="$(git rev-parse HEAD)" \
+            --label org.opencontainers.image.version="$IMAGE_TAG" \
+            -t "$IMAGE:$IMAGE_TAG" .
+          docker push "$IMAGE:$IMAGE_TAG"
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: pf-arc-linux
+    steps:
+      - name: Checkout pf_helm
+        uses: actions/checkout@v6
+        with:
+          repository: packetfabric/pf_helm
+          token: ${{ secrets.PF_OTTO_GITHUB_PAT_TOKEN }}
+          path: pf_helm
+
+      - name: Bump image tag, commit and push
+        working-directory: pf_helm
+        run: |
+          set -euo pipefail
+          git config user.email "dev@packetfabric.com"
+          git config user.name "GitHub Action Automation"
+          # pf_helm main also takes other apps' automated bumps: on a rejected push,
+          # start again from the new tip instead of rebasing.
+          for attempt in 1 2 3; do
+            git fetch -q origin main
+            git reset -q --hard FETCH_HEAD
+            if [[ ! -f "$VALUES_FILE" ]]; then
+              echo "::error::$VALUES_FILE is not on pf_helm main"
+              exit 1
+            fi
+            sed -i "s@$IMAGE:[a-zA-Z0-9._-]*@$IMAGE:$IMAGE_TAG@g" "$VALUES_FILE"
+            # Unlike necron99's run-numbered tags, a release tag can be redeployed, so an
+            # unchanged file means prod already runs it, not a broken image reference.
+            if git diff --quiet; then
+              echo "::notice::prod already runs $IMAGE:$IMAGE_TAG"
+              exit 0
+            fi
+            git diff --stat
+            git commit -qam "public-mcp: deploy ${IMAGE_TAG} from GitHub Actions"
+            if git push -q origin HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt), retrying"
+          done
+          exit 1
+
+      - name: Notify
+        if: always()
+        uses: slackapi/slack-github-action@v3
+        continue-on-error: true
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL_CHANGELOG_PLATFORM }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "public-mcp ${{ env.IMAGE_TAG }} -> prod: ${{ job.status }}"
