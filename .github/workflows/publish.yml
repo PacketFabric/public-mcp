@@ -1,5 +1,6 @@
 # Release: bump the version in pyproject.toml, src/packetfabric_mcp/__init__.py and server.json
-# (tests fail if they disagree), then push a tag `vX.Y.Z`.
+# (tests fail if they disagree), merge dev into main with a PR, then push a tag `vX.Y.Z` on main.
+# A release tag that is not on main fails; pre-release tags such as `v0.3.0rc1` may come from dev.
 #
 # One-time setup:
 #  - PyPI: add a Trusted Publisher for project `packetfabric-mcp` -> this repo, workflow
@@ -22,6 +23,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history, so the release check can see main
+      - name: Check release tag is on main
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            git merge-base --is-ancestor HEAD origin/main \
+              || { echo "tag $GITHUB_REF_NAME is not on main; tag releases on main after the dev -> main PR"; exit 1; }
+          fi
       - uses: astral-sh/setup-uv@v6
       - name: Check tag matches version
         run: |

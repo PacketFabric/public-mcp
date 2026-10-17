@@ -134,10 +134,15 @@ absolute URLs, so a static copy works).
 Listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as
 `io.github.PacketFabric/packetfabric-mcp` (see `server.json`), installed from PyPI as `packetfabric-mcp`.
 
+Branches: `dev` (default) takes every change, and each push to it redeploys the staging server at
+`https://mcp.dev.packetfabric.net`. `main` is the release line.
+
 1. Bump the version in `pyproject.toml`, `src/packetfabric_mcp/__init__.py` and `server.json`
    (tests fail if they disagree).
-2. Push a tag `vX.Y.Z`. `.github/workflows/publish.yml` runs the tests, publishes to PyPI (Trusted Publishing),
-   then publishes `server.json` to the MCP Registry using GitHub OIDC.
+2. Merge `dev` into `main` with a PR, then push a tag `vX.Y.Z` on `main`. `.github/workflows/publish.yml` runs the
+   tests, publishes to PyPI (Trusted Publishing), then publishes `server.json` to the MCP Registry using GitHub OIDC.
+   `.github/workflows/deploy.yml` deploys the same tag to `https://mcp.packetfabric.com`. Both refuse a release tag
+   that is not on `main`; pre-release tags (`vX.Y.ZrcN`) may come from `dev` and never deploy.
 3. Once the hosted server is live, set the repo variable `MCP_PUBLIC_URL` and the registry entry will also list it
    as a remote.
 
