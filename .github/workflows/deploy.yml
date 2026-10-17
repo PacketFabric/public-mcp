@@ -9,7 +9,9 @@
 #    builds gcr.io/packetfabric/public-mcp:dev-<run_number> and deploys it.
 #  - production, https://mcp.packetfabric.com: a release tag vX.Y.Z (the same tag
 #    publish.yml ships to PyPI) builds gcr.io/packetfabric/public-mcp:vX.Y.Z and deploys it.
-#    Pre-release tags such as v0.3.0rc1 do not match the tag filter and never deploy.
+#    Release tags must be on main, i.e. pushed after the dev -> main PR; a release tag
+#    anywhere else fails. Pre-release tags such as v0.3.0rc1 do not match the tag filter
+#    and never deploy.
 #
 # A tag already in the registry is not rebuilt. Run it by hand (Actions > deploy > Run
 # workflow) with a release tag to build one that predates this workflow or to redeploy it
@@ -53,6 +55,15 @@ jobs:
         with:
           # Staging builds the pushed commit; production builds the release tag.
           ref: ${{ env.TARGET == 'staging' && github.sha || format('refs/tags/{0}', env.IMAGE_TAG) }}
+          # Full history, so the production check below can see main.
+          fetch-depth: 0
+
+      - name: Check tag is on main
+        if: env.TARGET == 'production'
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main \
+            || { echo "::error::$IMAGE_TAG is not on main; tag releases on main after the dev -> main PR"; exit 1; }
 
       - name: Check tag matches version
         if: env.TARGET == 'production'
