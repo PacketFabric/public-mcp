@@ -1,6 +1,8 @@
 # Release: bump the version in pyproject.toml, src/packetfabric_mcp/__init__.py and server.json
 # (tests fail if they disagree), merge dev into main with a PR, then push a tag `vX.Y.Z` on main.
 # A release tag that is not on main fails; pre-release tags such as `v0.3.0rc1` may come from dev.
+# Pre-release tags publish to PyPI only (pip/uvx skip them unless asked); they are never listed
+# on the MCP Registry, which would otherwise show the release candidate as the latest version.
 #
 # One-time setup:
 #  - PyPI: add a Trusted Publisher for project `packetfabric-mcp` -> this repo, workflow
@@ -21,7 +23,17 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      release: ${{ steps.kind.outputs.release }}
     steps:
+      - name: Release or pre-release?
+        id: kind
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"; echo "Pre-release tag: PyPI only, no MCP Registry publish"
+          fi
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # full history, so the release check can see main
@@ -43,6 +55,7 @@ jobs:
 
   mcp-registry:
     needs: pypi
+    if: needs.pypi.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
