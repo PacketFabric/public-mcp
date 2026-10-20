@@ -9,8 +9,8 @@
 #    `publish.yml`, environment `pypi`.
 #  - MCP Registry: nothing; GitHub OIDC from the PacketFabric org proves the
 #    io.github.PacketFabric/* namespace.
-#  - Optional: set repo variable MCP_PUBLIC_URL (e.g. https://mcp.packetfabric.com) once the
-#    hosted server is live; the registry entry then also lists the remote endpoint.
+#  - The hosted endpoint (https://mcp.packetfabric.com/mcp) is listed in server.json itself.
+#    The repo variable MCP_PUBLIC_URL, if set, overrides it at publish time.
 name: Publish
 on:
   push:
