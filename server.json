@@ -3,7 +3,7 @@
   "name": "io.github.PacketFabric/packetfabric-mcp",
   "title": "PacketFabric",
   "description": "Query and manage PacketFabric NaaS: ports, virtual circuits, cloud routers, pricing, metrics.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "websiteUrl": "https://github.com/PacketFabric/public-mcp",
   "repository": {
     "url": "https://github.com/PacketFabric/public-mcp",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "packetfabric-mcp",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -30,11 +30,28 @@
           "name": "PF_ALLOW_WRITES",
           "description": "Set to true to allow create/modify/delete calls (each still needs confirm=true)",
           "default": "false",
-          "choices": ["true", "false"]
+          "choices": [
+            "true",
+            "false"
+          ]
         },
         {
           "name": "PF_ON_BEHALF",
           "description": "Resellers only: customer UUID to act on behalf of"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.packetfabric.com/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <your PacketFabric API key>",
+          "isRequired": true,
+          "isSecret": true
         }
       ]
     }

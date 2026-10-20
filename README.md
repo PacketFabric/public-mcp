@@ -143,8 +143,8 @@ Branches: `dev` (default) takes every change, and each push to it redeploys the 
    tests, publishes to PyPI (Trusted Publishing), then publishes `server.json` to the MCP Registry using GitHub OIDC.
    `.github/workflows/deploy.yml` deploys the same tag to `https://mcp.packetfabric.com`. Both refuse a release tag
    that is not on `main`; pre-release tags (`vX.Y.ZrcN`) may come from `dev`, publish to PyPI only (not the MCP Registry), and never deploy.
-3. Once the hosted server is live, set the repo variable `MCP_PUBLIC_URL` and the registry entry will also list it
-   as a remote.
+3. The registry entry lists the hosted endpoint `https://mcp.packetfabric.com/mcp` (in `server.json`; the repo
+   variable `MCP_PUBLIC_URL` overrides it if set).
 
 One-time: add a PyPI Trusted Publisher for `packetfabric-mcp` (repo `PacketFabric/public-mcp`, workflow
 `publish.yml`, environment `pypi`). The `mcp-name:` comment at the top of this README is how the registry verifies
