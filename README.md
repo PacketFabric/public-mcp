@@ -96,6 +96,9 @@ PF_PUBLIC_URL=https://mcp.example.com uv run packetfabric-mcp --http --host 0.0.
 | `GET /.well-known/agent-card.json` | [A2A](https://a2a-protocol.org) v1.0 Agent Card |
 | `POST /a2a` | A2A JSON-RPC endpoint |
 | `GET /.well-known/ai-catalog.json` | [AI Catalog](https://ai-catalog.io) listing both cards |
+| `GET /.well-known/agent.json` | Same agent card at the pre-0.3 A2A path, for older clients |
+| `GET /llms.txt` | Summary and links for language models ([llmstxt.org](https://llmstxt.org)) |
+| `GET /` | Short human-readable page linking to all of the above |
 | `GET /healthz` | Liveness |
 
 **Every caller uses their own PacketFabric API key**, sent as `Authorization: Bearer <key>` (plus

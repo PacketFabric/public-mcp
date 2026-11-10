@@ -3,7 +3,7 @@
   "name": "io.github.PacketFabric/packetfabric-mcp",
   "title": "PacketFabric",
   "description": "Query and manage PacketFabric NaaS: ports, virtual circuits, cloud routers, pricing, metrics.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "websiteUrl": "https://github.com/PacketFabric/public-mcp",
   "repository": {
     "url": "https://github.com/PacketFabric/public-mcp",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "packetfabric-mcp",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
