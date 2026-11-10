@@ -33,6 +33,8 @@ MCP_PATH = "/mcp"
 SERVER_CARD_PATH = MCP_PATH + "/server-card"  # SEP-2127: <streamable-http-url>/server-card
 A2A_PATH = "/a2a"
 AGENT_CARD_PATH = "/.well-known/agent-card.json"
+LEGACY_AGENT_CARD_PATH = "/.well-known/agent.json"  # pre-0.3 A2A clients still look here
+LLMS_TXT_PATH = "/llms.txt"
 AI_CATALOG_PATH = "/.well-known/ai-catalog.json"
 
 AUTH_HELP = "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys)."
