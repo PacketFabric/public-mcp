@@ -20,7 +20,7 @@ from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
 
 from . import discovery, metadata
@@ -106,6 +106,43 @@ class BodySizeLimit:
         await send({"type": "http.response.body", "body": body})
 
 
+PUBLIC_DOC_PATHS = frozenset(
+    {
+        metadata.SERVER_CARD_PATH,
+        metadata.AI_CATALOG_PATH,
+        metadata.AGENT_CARD_PATH,
+        metadata.LEGACY_AGENT_CARD_PATH,
+        metadata.LLMS_TXT_PATH,
+    }
+)
+
+
+class PublicDocCORS:
+    """Browser-readable discovery documents: answer CORS preflights and add the CORS headers to
+    every response on the public document paths (the SDK's agent-card route doesn't set them)."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self._headers = [(k.lower().encode(), v.encode()) for k, v in CORS_HEADERS.items()]
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or scope.get("path") not in PUBLIC_DOC_PATHS:
+            await self.app(scope, receive, send)
+            return
+        if scope.get("method") == "OPTIONS":
+            await send({"type": "http.response.start", "status": 204, "headers": self._headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def with_cors(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                names = {k for k, _ in self._headers}
+                message["headers"] = [h for h in message.get("headers", []) if h[0].lower() not in names] + self._headers
+            await send(message)
+
+        await self.app(scope, receive, with_cors)
+
+
 def _env_true(name: str) -> bool:
     return os.environ.get(name, "").lower() in ("1", "true", "yes", "on")
 
@@ -149,6 +186,9 @@ def build_app(
             )
             a2a_routes = [
                 *create_agent_card_routes(agent_card, cache_control="public, max-age=3600"),
+                *create_agent_card_routes(
+                    agent_card, card_url=metadata.LEGACY_AGENT_CARD_PATH, cache_control="public, max-age=3600"
+                ),
                 *create_jsonrpc_routes(handler, rpc_url=metadata.A2A_PATH),
             ]
         except ImportError:
@@ -163,8 +203,12 @@ def build_app(
         doc = discovery.build_ai_catalog(_base_url(request, public_url), include_a2a=agent_card is not None)
         return _doc_response(request, doc, discovery.AI_CATALOG_MEDIA_TYPE)
 
-    async def preflight(request: Request) -> Response:
-        return Response(status_code=204, headers=CORS_HEADERS)
+    async def llms_txt(request: Request) -> Response:
+        body = discovery.build_llms_txt(_base_url(request, public_url))
+        return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
+
+    async def home(request: Request) -> Response:
+        return HTMLResponse(discovery.build_home_page(_base_url(request, public_url)))
 
     async def healthz(request: Request) -> Response:
         return JSONResponse({"ok": True, "version": metadata.VERSION})
@@ -178,11 +222,12 @@ def build_app(
     # Discovery routes go first so /mcp/server-card isn't swallowed by the /mcp mount.
     app.router.routes[0:0] = [
         Route(metadata.SERVER_CARD_PATH, server_card, methods=["GET"]),
-        Route(metadata.SERVER_CARD_PATH, preflight, methods=["OPTIONS"]),
         Route(metadata.AI_CATALOG_PATH, ai_catalog, methods=["GET"]),
-        Route(metadata.AI_CATALOG_PATH, preflight, methods=["OPTIONS"]),
+        Route(metadata.LLMS_TXT_PATH, llms_txt, methods=["GET"]),
+        Route("/", home, methods=["GET"]),
         Route("/healthz", healthz, methods=["GET"]),
         *a2a_routes,
     ]
     app.add_middleware(BodySizeLimit, max_bytes=MAX_BODY_BYTES)
+    app.add_middleware(PublicDocCORS)
     return app

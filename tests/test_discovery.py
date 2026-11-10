@@ -179,3 +179,31 @@ async def test_mcp_over_http_uses_callers_key(app, respx_mock):
         r = await http.post("/mcp", json=call, headers={**hdrs, **proto, "Authorization": "Bearer caller-key"})
         assert r.json()["result"]["isError"] is False, r.text
         assert route.calls.last.request.headers["Authorization"] == "Bearer caller-key"
+
+
+async def test_legacy_agent_card_path_and_cors(app):
+    async with serve(app) as http:
+        new = await http.get("/.well-known/agent-card.json")
+        old = await http.get("/.well-known/agent.json")
+        assert new.status_code == old.status_code == 200
+        assert old.json() == new.json()
+        for path in ("/.well-known/agent-card.json", "/.well-known/agent.json", "/.well-known/ai-catalog.json",
+                     "/mcp/server-card", "/llms.txt"):  # fmt: skip
+            r = await http.get(path)
+            assert r.headers["access-control-allow-origin"] == "*", path
+            pre = await http.options(path, headers={"Origin": "https://x.example", "Access-Control-Request-Method": "GET"})
+            assert pre.status_code == 204 and pre.headers["access-control-allow-origin"] == "*", path
+
+
+async def test_llms_txt_and_home_page(app):
+    async with serve(app) as http:
+        r = await http.get("/llms.txt")
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/plain")
+        assert r.text.startswith("# PacketFabric")
+        for path in ("/mcp", "/mcp/server-card", "/.well-known/agent-card.json", "/.well-known/ai-catalog.json"):
+            assert f"({BASE}{path})" in r.text
+        r = await http.get("/")
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+        assert f'href="{BASE}/.well-known/agent-card.json"' in r.text and __version__ in r.text
+        # The MCP endpoint itself is unaffected by the new root route.
+        assert (await http.get("/healthz")).json()["version"] == __version__
