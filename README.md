@@ -137,16 +137,20 @@ absolute URLs, so a static copy works).
 Listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as
 `io.github.PacketFabric/packetfabric-mcp` (see `server.json`), installed from PyPI as `packetfabric-mcp`.
 
-Branches: `dev` (default) takes every change, and each push to it redeploys the staging server at
-`https://mcp.dev.packetfabric.net`. `main` is the release line.
+Branches: `dev` (default) takes every change. Each push to it publishes the container image
+`ghcr.io/packetfabric/public-mcp:vX.Y.Z-dev.N` (`.github/workflows/image.yml`), and the staging server at
+`https://mcp.dev.packetfabric.net` picks the newest one up within minutes. `main` is the release line.
 
 1. Bump the version in `pyproject.toml`, `src/packetfabric_mcp/__init__.py` and `server.json`
    (tests fail if they disagree).
 2. Merge `dev` into `main` with a PR, then push a tag `vX.Y.Z` on `main`. `.github/workflows/publish.yml` runs the
    tests, publishes to PyPI (Trusted Publishing), then publishes `server.json` to the MCP Registry using GitHub OIDC.
-   `.github/workflows/deploy.yml` deploys the same tag to `https://mcp.packetfabric.com`. Both refuse a release tag
-   that is not on `main`; pre-release tags (`vX.Y.ZrcN`) may come from `dev`, publish to PyPI only (not the MCP Registry), and never deploy.
-3. The registry entry lists the hosted endpoint `https://mcp.packetfabric.com/mcp` (in `server.json`; the repo
+   `.github/workflows/image.yml` publishes `ghcr.io/packetfabric/public-mcp:vX.Y.Z` and writes its digest to the run
+   summary. Both refuse a release tag that is not on `main`; pre-release tags (`vX.Y.ZrcN`) may come from `dev`,
+   publish to PyPI only (not the MCP Registry), and build no image.
+3. Production (`https://mcp.packetfabric.com`) moves to the new image only through a PR to PacketFabric's private
+   deployment repo (pf_helm) that sets `pod.image` to the line from that `image.yml` run summary.
+4. The registry entry lists the hosted endpoint `https://mcp.packetfabric.com/mcp` (in `server.json`; the repo
    variable `MCP_PUBLIC_URL` overrides it if set).
 
 One-time: add a PyPI Trusted Publisher for `packetfabric-mcp` (repo `PacketFabric/public-mcp`, workflow
