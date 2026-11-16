@@ -3,6 +3,9 @@
 # A release tag that is not on main fails; pre-release tags such as `v0.3.0rc1` may come from dev.
 # Pre-release tags publish to PyPI only (pip/uvx skip them unless asked); they are never listed
 # on the MCP Registry, which would otherwise show the release candidate as the latest version.
+# The same release tag makes image.yml publish ghcr.io/packetfabric/public-mcp:vX.Y.Z. The hosted
+# server (https://mcp.packetfabric.com) moves to it only through a pf_helm PR that sets pod.image
+# in envs/prod-central1-c/public-mcp/values.yaml to the line in that image.yml run's summary.
 #
 # One-time setup:
 #  - PyPI: add a Trusted Publisher for project `packetfabric-mcp` -> this repo, workflow
