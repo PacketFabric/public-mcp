@@ -3,11 +3,13 @@
 # Runs on GitHub-hosted runners with this repo's own GITHUB_TOKEN: no self-hosted runners,
 # no cloud credentials, no deploy token.
 #  - push to dev: v<pyproject version>-dev.<run_number>. The staging server
-#    (https://mcp.dev.packetfabric.net) follows the newest one through Flux.
+#    (https://mcp.dev.packetfabric.net) follows the newest one through Flux, so staging runs
+#    what is on dev.
 #  - release tag vX.Y.Z on main (the same tag publish.yml ships to PyPI): vX.Y.Z.
-#    Production (https://mcp.packetfabric.com) moves only through a pf_helm PR that sets
-#    pod.image to the line this run writes to its summary. Release tags must be on main;
-#    pre-release tags such as v0.3.0rc1 do not match the tag filter and build no image.
+#    Production (https://mcp.packetfabric.com) follows the newest one the same way, so a
+#    release tag is a production deploy. Release tags must be on main; pre-release tags
+#    such as v0.3.0rc1 do not match the tag filter and build no image.
+# Each run writes the tag@digest it published to its summary, for pinning or rolling back.
 #
 # A tag already in the registry is never rebuilt, so published tags stay immutable.
 # Never rename this file: a new workflow file restarts run_number, new dev tags would sort
@@ -87,4 +89,4 @@ jobs:
             docker push "$IMAGE:$TAG"
           fi
           digest=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
-          echo "pf_helm \`pod.image\`: \`$IMAGE:$TAG@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published \`$IMAGE:$TAG@$digest\`" >> "$GITHUB_STEP_SUMMARY"

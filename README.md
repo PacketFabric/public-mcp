@@ -148,8 +148,8 @@ Branches: `dev` (default) takes every change. Each push to it publishes the cont
    `.github/workflows/image.yml` publishes `ghcr.io/packetfabric/public-mcp:vX.Y.Z` and writes its digest to the run
    summary. Both refuse a release tag that is not on `main`; pre-release tags (`vX.Y.ZrcN`) may come from `dev`,
    publish to PyPI only (not the MCP Registry), and build no image.
-3. Production (`https://mcp.packetfabric.com`) moves to the new image only through a PR to PacketFabric's private
-   deployment repo (pf_helm) that sets `pod.image` to the line from that `image.yml` run summary.
+3. Production (`https://mcp.packetfabric.com`) runs the newest release: it picks up the new `vX.Y.Z` image within
+   minutes of `image.yml` publishing it. Pushing a release tag on `main` is therefore a production deploy.
 4. The registry entry lists the hosted endpoint `https://mcp.packetfabric.com/mcp` (in `server.json`; the repo
    variable `MCP_PUBLIC_URL` overrides it if set).
 
