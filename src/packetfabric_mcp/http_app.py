@@ -257,7 +257,12 @@ def build_app(
         sdk_auth_args, sign_in_routes = _oauth(oauth_cfg)
         # MCPServer.streamable_http_app only reads auth from attributes fixed when `mcp` was
         # created at import time, so the OAuth app is built from the low-level server directly.
-        app = mcp._lowlevel_server.streamable_http_app(**http_args, **sdk_auth_args)
+        app = mcp._lowlevel_server.streamable_http_app(
+            **http_args,
+            **sdk_auth_args,
+            custom_starlette_routes=mcp._custom_starlette_routes,
+            debug=mcp.settings.debug,
+        )
     # Our routes go first: our /register replaces the SDK's, and /mcp/server-card mustn't be
     # swallowed by the /mcp mount.
     app.router.routes[0:0] = [

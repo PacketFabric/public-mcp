@@ -312,6 +312,26 @@ async def test_raw_key_passthrough(provider):
     assert access.key_uuid is None
 
 
+@pytest.mark.parametrize("padded", [" api-pasted", "api-pasted  ", "\tapi-pasted\r\n"])
+async def test_raw_key_is_stripped(provider, padded):
+    assert (await provider.load_access_token(padded)).token == "api-pasted"
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["", "   ", "\t", " pfmcp_code_abc", "  pfmcp_at_forged", "\tpfmcp_at_x", "\u00a0pfmcp_r_x",
+     "api pasted", "api\tpasted", "api\x00pasted", "api\x7fpasted", "\x00api-pasted"],
+)  # fmt: skip
+async def test_padded_or_malformed_tokens_are_refused(provider, token):
+    assert await provider.load_access_token(token) is None
+
+
+async def test_padded_sealed_token_still_unseals(provider):
+    client, code = await issued_code(provider)
+    token = await provider.exchange_authorization_code(client, await provider.load_authorization_code(client, code))
+    assert (await provider.load_access_token(" " + token.access_token)).token == "api-user-key"
+
+
 async def test_bad_sealed_token_is_none(provider):
     assert await provider.load_access_token("pfmcp_at_garbage") is None
 

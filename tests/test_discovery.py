@@ -134,6 +134,18 @@ async def test_a2a_without_key_gets_message_and_never_uses_operator_key(app):
         assert "API key" in result["message"]["parts"][0]["text"]
 
 
+@pytest.mark.parametrize("token", ["pfmcp_at_x", "pfmcp_code_x", " pfmcp_at_x"])
+async def test_a2a_refuses_sign_in_tokens(app, respx_mock, token):
+    async with serve(app) as http:
+        r = await http.post(
+            "/a2a", json=_a2a({"skill": "get_account"}), headers={**A2A_HEADERS, "Authorization": f"Bearer {token}"}
+        )
+        result = r.json()["result"]
+        assert "task" not in result
+        assert result["message"]["parts"][0]["text"] == metadata.AUTH_HELP
+    assert not respx_mock.calls
+
+
 async def test_a2a_unknown_skill_gets_help(app):
     async with serve(app) as http:
         r = await http.post("/a2a", json=_a2a({"skill": "nope"}), headers=A2A_HEADERS)

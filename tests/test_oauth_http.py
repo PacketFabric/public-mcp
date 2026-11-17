@@ -199,6 +199,29 @@ async def test_bad_signed_in_token_gets_401(oauth_app):
         assert r.status_code == 401
 
 
+@pytest.mark.parametrize(
+    "header", ["Bearer  pfmcp_at_gAAAAABforgedButWellFormed", "Bearer  pfmcp_code_x", "Bearer \tpfmcp_at_x"]
+)
+async def test_padded_sign_in_tokens_get_401_and_never_reach_packetfabric(oauth_app, respx_mock, header):
+    async with serve(oauth_app) as http:
+        for body in (INIT, CALL):
+            r = await http.post("/mcp", json=body, headers={**HDRS, **PROTO, "Authorization": header})
+            assert r.status_code == 401
+            assert 'resource_metadata="' in r.headers["www-authenticate"]
+    assert not respx_mock.calls
+
+
+@respx.mock
+async def test_padded_raw_key_is_sent_stripped(oauth_app, respx_mock):
+    route = respx_mock.get(f"{PF}/v2/customers/current").mock(return_value=httpx.Response(200, json={"name": "X"}))
+    auth = {"Authorization": "Bearer  caller-key"}
+    async with serve(oauth_app) as http:
+        assert (await http.post("/mcp", json=INIT, headers={**HDRS, **auth})).status_code == 200
+        r = await http.post("/mcp", json=CALL, headers={**HDRS, **PROTO, **auth})
+        assert r.json()["result"]["isError"] is False, r.text
+        assert route.calls.last.request.headers["Authorization"] == "Bearer caller-key"
+
+
 async def test_oauth_off_is_unchanged(base_env):
     from packetfabric_mcp.http_app import build_app
 
@@ -219,4 +242,21 @@ def test_sdk_contract():
 
     assert "_lowlevel_server" in vars(server.mcp)
     params = inspect.signature(server.mcp._lowlevel_server.streamable_http_app).parameters
-    assert {"auth", "token_verifier", "auth_server_provider"} <= params.keys()
+    assert {"auth", "token_verifier", "auth_server_provider", "custom_starlette_routes", "debug"} <= params.keys()
+    assert isinstance(server.mcp._custom_starlette_routes, list)
+    assert isinstance(server.mcp.settings.debug, bool)
+
+
+def test_oauth_app_keeps_mcpserver_routes_and_debug(oauth_env, monkeypatch):
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    from packetfabric_mcp import server
+    from packetfabric_mcp.http_app import build_app
+
+    extra = Route("/extra-probe", lambda request: PlainTextResponse("ok"))
+    monkeypatch.setattr(server.mcp, "_custom_starlette_routes", [extra])
+    monkeypatch.setattr(server.mcp.settings, "debug", True)
+    app = build_app(public_url=MCP_URL)
+    assert extra in app.router.routes
+    assert app.debug is True

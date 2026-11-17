@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 from urllib.parse import quote
@@ -26,7 +27,9 @@ from .seal import Sealer, is_access_token
 log = logging.getLogger(__name__)
 
 RAW_KEY_CLIENT_ID = "api-key"
-_OUR_PREFIX = "pfmcp_"
+# Every artifact we mint starts with this; nothing in this namespace is a PacketFabric key.
+TOKEN_PREFIX = "pfmcp_"
+_WHITESPACE_OR_CONTROL = re.compile(r"[\s\x00-\x1f\x7f-\x9f]")
 REQUEST_TTL_SECONDS = 600
 CODE_TTL_SECONDS = 300
 # Tokens lapse a minute before the key does, so a client never presents an already-dead key.
@@ -217,9 +220,14 @@ class PacketFabricOAuthProvider:
         raise TokenError(error="unsupported_grant_type", error_description="refresh tokens are not issued")
 
     async def load_access_token(self, token: str) -> PFAccessToken | None:
+        # The SDK passes everything after "Bearer " unstripped, so padding must not let one of
+        # our artifacts dodge the prefix checks below and pass as a raw key.
+        token = token.strip()
+        if not token or _WHITESPACE_OR_CONTROL.search(token):
+            return None
         if not is_access_token(token):
             # Anything in our namespace (e.g. a code) must never be forwarded to PacketFabric as if it were a key.
-            if token.startswith(_OUR_PREFIX):
+            if token.startswith(TOKEN_PREFIX):
                 return None
             # Anything else is a PacketFabric API key pasted by the user.
             return PFAccessToken(
