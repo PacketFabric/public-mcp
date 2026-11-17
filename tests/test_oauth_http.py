@@ -121,6 +121,19 @@ async def test_register_route_is_ours(oauth_app):
         assert (await register(http)).startswith("pfmcp_c_")
 
 
+async def test_register_refuses_arbitrary_deeplink(oauth_app):
+    async with serve(oauth_app) as http:
+        r = await http.post(
+            "/register",
+            json={
+                "redirect_uris": ["vscode://vscode.git/clone?url=https%3A%2F%2Fevil.example%2Frepo"],
+                "token_endpoint_auth_method": "none",
+            },
+        )
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_redirect_uri"
+
+
 async def test_authorize_redirects_to_portal(oauth_app):
     async with serve(oauth_app) as http:
         client_id = await register(http)

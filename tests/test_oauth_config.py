@@ -31,7 +31,7 @@ def test_origin_exact_port():
     ("https://claude.ai/api/mcp/auth_callback", True),
     ("https://chatgpt.com/connector_platform_oauth_redirect", True),
     ("cursor://anysphere.cursor-mcp/oauth/callback", True),
-    ("vscode://vscode.github-authentication/did-authenticate", True),
+    ("vscode://vscode.github-authentication/did-authenticate", False),
     ("http://localhost:51234/callback", True),
     ("http://127.0.0.1/cb", True),
     ("http://[::1]:9000/cb", True),
@@ -50,7 +50,9 @@ def test_redirect_allowed(uri, ok):
 def test_redirect_display():
     assert redirect_display("http://127.0.0.1:5555/cb") == "127.0.0.1:5555"
     assert redirect_display("https://claude.ai/api/mcp/auth_callback") == "claude.ai"
-    assert redirect_display("cursor://anysphere.cursor-mcp/oauth/callback") == "cursor://"
+    assert redirect_display("cursor://anysphere.cursor-mcp/oauth/callback") == "cursor://anysphere.cursor-mcp"
+    assert redirect_display("cursor://anysphere.cursor-mcp:9/x") == "cursor://anysphere.cursor-mcp:9"
+    assert redirect_display("myapp:/callback") == "myapp:"
 
 def test_from_env_disabled_unless_both_set(monkeypatch):
     monkeypatch.delenv("PF_OAUTH_SECRET", raising=False)
@@ -123,9 +125,7 @@ def test_default_allowed_redirects_exact():
         "https://claude.com/api/mcp/auth_callback",
         "https://chatgpt.com/connector_platform_oauth_redirect",
         "https://vscode.dev/redirect",
-        "cursor://",
-        "vscode://",
-        "vscode-insiders://",
+        "cursor://anysphere.cursor-mcp/oauth/callback",
     )
 
 
@@ -134,8 +134,26 @@ def test_default_allowed_redirects_exact():
     [
         "https://claude.com/api/mcp/auth_callback",
         "https://vscode.dev/redirect",
-        "vscode-insiders://vscode.github-authentication/did-authenticate",
+        "cursor://anysphere.cursor-mcp/oauth/callback",
     ],
 )
 def test_newly_allowed_redirects(uri):
     assert redirect_allowed(uri, DEFAULT_ALLOWED_REDIRECTS) is True
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "cursor://anysphere.cursor-deeplink/mcp/install?x=1",
+        "vscode://vscode.git/clone?url=x",
+        "vscode-insiders://a/b",
+        "cursor://anysphere.cursor-mcp/oauth/callback?x=1",
+        "CURSOR://anysphere.cursor-mcp/oauth/callback",
+    ],
+)
+def test_deeplinks_must_match_exactly(uri):
+    assert redirect_allowed(uri, DEFAULT_ALLOWED_REDIRECTS) is False
+
+
+def test_scheme_only_entry_no_longer_matches_the_scheme():
+    assert redirect_allowed("cursor://anything/x", ["cursor://"]) is False

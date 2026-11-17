@@ -124,7 +124,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `PF_OAUTH_SECRET` | Fernet key(s), comma-separated, newest first. Sign-in is off unless this and `PF_PORTAL_URL` are set |
 | `PF_PORTAL_URL` | Portal base URL users sign in at (for example `https://portal.packetfabric.com`) |
 | `PF_PORTAL_ORIGINS` | Allowed portal origins, `*` wildcard for a subdomain label (default `https://portal.packetfabric.com, https://portal-beta.packetfabric.com, https://*.portal.packetfabric.com`) |
-| `PF_OAUTH_ALLOWED_REDIRECTS` | Allowed client redirect URIs (default: the known AI-app callbacks; loopback is always allowed) |
+| `PF_OAUTH_ALLOWED_REDIRECTS` | Allowed client redirect URIs, comma-separated; each must match the whole URI exactly (default: the known AI-app callbacks; loopback `http(s)://localhost`, `127.0.0.1` or `[::1]` on any port and path is always allowed) |
 | `PF_OAUTH_KEY_TTL_SECONDS` | Lifetime of the API key created per sign-in (default 2592000, 30 days) |
 
 The sign-in routes (`/authorize`, `/token`, `/register`, `/revoke`, `/oauth/request`, `/oauth/callback`,

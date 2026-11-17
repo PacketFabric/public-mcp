@@ -13,16 +13,15 @@ DEFAULT_PORTAL_ORIGINS: tuple[str, ...] = (
     "https://portal-beta.packetfabric.com",
     "https://*.portal.packetfabric.com",
 )
-# Entries ending in "://" allow any redirect URI with that scheme; all others
-# must match the whole URI exactly. Loopback redirects are always allowed.
+# Every entry must equal the redirect URI exactly: a scheme-wide entry would let anyone register
+# an arbitrary deeplink, and the SDK's /authorize error responses redirect there with no consent
+# screen. Loopback redirects are always allowed. Check these against the real clients before release.
 DEFAULT_ALLOWED_REDIRECTS: tuple[str, ...] = (
     "https://claude.ai/api/mcp/auth_callback",
     "https://claude.com/api/mcp/auth_callback",
     "https://chatgpt.com/connector_platform_oauth_redirect",
     "https://vscode.dev/redirect",
-    "cursor://",
-    "vscode://",
-    "vscode-insiders://",
+    "cursor://anysphere.cursor-mcp/oauth/callback",
 )
 DEFAULT_KEY_TTL_SECONDS = 2_592_000
 
@@ -120,17 +119,12 @@ def redirect_allowed(uri: str, allowed: Sequence[str]) -> bool:
         return False
     if u.scheme in ("http", "https") and u.hostname in _LOOPBACK_HOSTS:
         return True
-    for entry in allowed:
-        if entry.endswith("://"):
-            if u.scheme == entry[:-3].lower() and uri.lower().startswith(entry.lower()):
-                return True
-        elif uri == entry:
-            return True
-    return False
+    return uri in allowed
 
 
 def redirect_display(uri: str) -> str:
     u = urlsplit(uri)
+    authority = u.netloc.rpartition("@")[2]
     if u.scheme in ("http", "https"):
-        return u.netloc.rpartition("@")[2]
-    return f"{u.scheme}://"
+        return authority
+    return f"{u.scheme}://{authority}" if authority else f"{u.scheme}:"
