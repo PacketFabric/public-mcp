@@ -40,7 +40,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import metadata, server
 from .client import caller_credentials, credentials_from_headers
-from .oauth.provider import TOKEN_PREFIX
+from .oauth.seal import clean_bearer, is_sign_in_artifact
 
 A2A_PROTOCOL_VERSION = "1.0"
 SECURITY_SCHEME_ID = "packetfabricApiKey"
@@ -184,9 +184,15 @@ class PacketFabricAgentExecutor(AgentExecutor):
         # No credentials: answer with a plain message so no task (and no owner) is ever created.
         headers = (context.call_context.state or {}).get("headers") if context.call_context else None
         creds = credentials_from_headers(headers)
-        # A2A has no sign-in: our own tokens are never forwarded to PacketFabric as keys.
-        if creds is None or not creds.token or creds.token.startswith(TOKEN_PREFIX):
+        key = clean_bearer(creds.token) if creds is not None and creds.token else None
+        if key is None:
             await event_queue.enqueue_event(new_text_message(metadata.AUTH_HELP, context_id=context.context_id))
+            return
+        # A2A has no sign-in: our own tokens are never forwarded to PacketFabric as keys.
+        if is_sign_in_artifact(key):
+            await event_queue.enqueue_event(
+                new_text_message(metadata.A2A_SIGN_IN_TOKEN_HELP, context_id=context.context_id)
+            )
             return
 
         task = context.current_task or new_task(

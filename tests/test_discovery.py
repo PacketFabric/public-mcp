@@ -131,7 +131,11 @@ async def test_a2a_without_key_gets_message_and_never_uses_operator_key(app):
         r = await http.post("/a2a", json=_a2a({"skill": "get_account"}), headers=A2A_HEADERS)
         result = r.json()["result"]
         assert "task" not in result  # no task is created for keyless callers
-        assert "API key" in result["message"]["parts"][0]["text"]
+        assert result["message"]["parts"][0]["text"] == metadata.AUTH_HELP
+
+
+def test_auth_help_is_the_api_key_sentence():
+    assert metadata.AUTH_HELP == "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys)."
 
 
 @pytest.mark.parametrize("token", ["pfmcp_at_x", "pfmcp_code_x", " pfmcp_at_x"])
@@ -139,6 +143,19 @@ async def test_a2a_refuses_sign_in_tokens(app, respx_mock, token):
     async with serve(app) as http:
         r = await http.post(
             "/a2a", json=_a2a({"skill": "get_account"}), headers={**A2A_HEADERS, "Authorization": f"Bearer {token}"}
+        )
+        result = r.json()["result"]
+        assert "task" not in result
+        assert result["message"]["parts"][0]["text"] == metadata.A2A_SIGN_IN_TOKEN_HELP
+    assert not respx_mock.calls
+
+
+async def test_a2a_refuses_internally_whitespaced_tokens(app, respx_mock):
+    async with serve(app) as http:
+        r = await http.post(
+            "/a2a",
+            json=_a2a({"skill": "get_account"}),
+            headers={**A2A_HEADERS, "Authorization": "Bearer x pfmcp_at_y"},
         )
         result = r.json()["result"]
         assert "task" not in result

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from typing import Any
 from urllib.parse import quote
@@ -22,14 +21,11 @@ from pydantic import AnyHttpUrl, Field, ValidationError
 
 from ..client import PacketFabricClient, PFError
 from .config import OAuthConfig, redirect_allowed, redirect_display
-from .seal import Sealer, is_access_token
+from .seal import Sealer, clean_bearer, is_access_token, is_sign_in_artifact
 
 log = logging.getLogger(__name__)
 
 RAW_KEY_CLIENT_ID = "api-key"
-# Every artifact we mint starts with this; nothing in this namespace is a PacketFabric key.
-TOKEN_PREFIX = "pfmcp_"
-_WHITESPACE_OR_CONTROL = re.compile(r"[\s\x00-\x1f\x7f-\x9f]")
 REQUEST_TTL_SECONDS = 600
 CODE_TTL_SECONDS = 300
 # Tokens lapse a minute before the key does, so a client never presents an already-dead key.
@@ -222,12 +218,13 @@ class PacketFabricOAuthProvider:
     async def load_access_token(self, token: str) -> PFAccessToken | None:
         # The SDK passes everything after "Bearer " unstripped, so padding must not let one of
         # our artifacts dodge the prefix checks below and pass as a raw key.
-        token = token.strip()
-        if not token or _WHITESPACE_OR_CONTROL.search(token):
+        cleaned = clean_bearer(token)
+        if cleaned is None:
             return None
+        token = cleaned
         if not is_access_token(token):
             # Anything in our namespace (e.g. a code) must never be forwarded to PacketFabric as if it were a key.
-            if token.startswith(TOKEN_PREFIX):
+            if is_sign_in_artifact(token):
                 return None
             # Anything else is a PacketFabric API key pasted by the user.
             return PFAccessToken(

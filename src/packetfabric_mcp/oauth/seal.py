@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import time
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -12,12 +13,33 @@ from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 Kind = Literal["client", "request", "code", "access"]
 
+# Every artifact we mint starts with this; nothing in this namespace is a PacketFabric key.
+TOKEN_PREFIX = "pfmcp_"
 PREFIXES: dict[Kind, str] = {
     "client": "pfmcp_c_",
     "request": "pfmcp_r_",
     "code": "pfmcp_code_",
     "access": "pfmcp_at_",
 }
+assert all(p.startswith(TOKEN_PREFIX) for p in PREFIXES.values())
+
+_WHITESPACE_OR_CONTROL = re.compile(r"[\s\x00-\x1f\x7f-\x9f]")
+
+
+def clean_bearer(value: str) -> str | None:
+    """The bearer value with padding removed, or None if nothing usable is left.
+
+    Internal whitespace or control characters make it unusable: otherwise a value such as
+    "x pfmcp_at_y" could hide one of our artifacts from a prefix check.
+    """
+    value = value.strip()
+    if not value or _WHITESPACE_OR_CONTROL.search(value):
+        return None
+    return value
+
+
+def is_sign_in_artifact(value: str) -> bool:
+    return value.startswith(TOKEN_PREFIX)
 
 
 def is_access_token(token: str) -> bool:
