@@ -1,13 +1,11 @@
 import dataclasses
 import logging
 import time
-import types
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 import respx
-from cryptography.fernet import Fernet
 from mcp.server.auth.handlers.authorize import AuthorizationHandler
 from mcp.server.auth.provider import AuthorizationParams, AuthorizeError, RegistrationError, TokenError
 from mcp.shared.auth import OAuthClientMetadata
@@ -15,9 +13,8 @@ from pydantic import AnyUrl
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from packetfabric_mcp.client import PacketFabricClient, PFError
+from packetfabric_mcp.client import PFError
 from packetfabric_mcp.oauth import provider as provider_mod
-from packetfabric_mcp.oauth.config import DEFAULT_ALLOWED_REDIRECTS, DEFAULT_PORTAL_ORIGINS, OAuthConfig
 from packetfabric_mcp.oauth.provider import (
     InvalidRequest,
     PacketFabricOAuthProvider,
@@ -29,41 +26,6 @@ from packetfabric_mcp.oauth.seal import Sealer
 BASE = "https://api.packetfabric.com"
 REDIRECT = "http://127.0.0.1:5555/cb"
 TTL = 2_592_000
-
-
-@pytest.fixture
-def cfg():
-    return OAuthConfig(
-        secrets=(Fernet.generate_key().decode(),),
-        public_url="https://mcp.example.net",
-        portal_url="https://portal.example.net",
-        portal_origins=DEFAULT_PORTAL_ORIGINS,
-        allowed_redirects=DEFAULT_ALLOWED_REDIRECTS,
-        key_ttl_seconds=TTL,
-    )
-
-
-@pytest.fixture
-async def pf(monkeypatch):
-    # Operator credentials are set on purpose: provider calls must never use them.
-    monkeypatch.setenv("PF_TOKEN", "operator-key")
-    monkeypatch.setenv("PF_ON_BEHALF", "operator-account")
-    monkeypatch.delenv("PF_API_URL", raising=False)
-    client = PacketFabricClient(BASE)
-    yield client
-    await client.aclose()
-
-
-@pytest.fixture
-def provider(cfg, pf):
-    return PacketFabricOAuthProvider(cfg, Sealer(cfg.secrets), pf)
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    state = {"now": time.time()}
-    monkeypatch.setattr(provider_mod, "time", types.SimpleNamespace(time=lambda: state["now"]))
-    return state
 
 
 def metadata(**kw):
