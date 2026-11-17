@@ -211,3 +211,9 @@ async def test_llms_txt_and_home_page(app):
         assert f'href="{BASE}/.well-known/agent-card.json"' in r.text and __version__ in r.text
         # The MCP endpoint itself is unaffected by the new root route.
         assert (await http.get("/healthz")).json()["version"] == __version__
+
+
+def test_auth_header_optional():
+    assert discovery.AUTH_HEADER["isRequired"] is False
+    assert "sign in with packetfabric" in discovery.build_home_page(BASE).lower()
+    assert "sign in with packetfabric" in discovery.build_llms_txt(BASE).lower()

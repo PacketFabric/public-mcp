@@ -37,7 +37,7 @@ LEGACY_AGENT_CARD_PATH = "/.well-known/agent.json"  # pre-0.3 A2A clients still 
 LLMS_TXT_PATH = "/llms.txt"
 AI_CATALOG_PATH = "/.well-known/ai-catalog.json"
 
-AUTH_HELP = "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys)."
+AUTH_HELP = "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys). Or reconnect this server in your AI client to sign in with PacketFabric."
 
 
 def catalog_publisher(base_url: str) -> str:

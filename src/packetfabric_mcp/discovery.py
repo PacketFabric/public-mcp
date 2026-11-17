@@ -22,8 +22,8 @@ AI_CATALOG_MEDIA_TYPE = "application/ai-catalog+json"
 
 AUTH_HEADER = {
     "name": "Authorization",
-    "description": "Bearer <your PacketFabric API key> (portal: Settings > API Keys)",
-    "isRequired": True,
+    "description": "Optional. Leave unset to sign in with PacketFabric, or send Bearer <your PacketFabric API key> (portal: Settings > API Keys).",
+    "isRequired": False,
     "isSecret": True,
     "value": "Bearer {api_key}",
     "variables": {"api_key": {"description": "PacketFabric API key", "isRequired": True, "isSecret": True}},
@@ -105,7 +105,7 @@ def build_llms_txt(base_url: str) -> str:
     base = base_url.rstrip("/")
     return f"""# {metadata.TITLE} MCP and A2A
 
-> {metadata.LONG_DESCRIPTION} Authenticate every request with `Authorization: Bearer <PacketFabric API key>`.
+> {metadata.LONG_DESCRIPTION} Sign in with PacketFabric when your client asks, or send `Authorization: Bearer <API key>`.
 
 ## For AI agents
 
@@ -133,7 +133,7 @@ def build_home_page(base_url: str) -> str:
 
     base = escape(base_url.rstrip("/"))
     rows = [
-        ("MCP endpoint", f"{base}{metadata.MCP_PATH}", "Streamable HTTP. Send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>."),
+        ("MCP endpoint", f"{base}{metadata.MCP_PATH}", "Streamable HTTP. Sign in with PacketFabric when your client asks, or send <code>Authorization: Bearer &lt;API key&gt;</code>."),
         ("MCP server card", f"{base}{metadata.SERVER_CARD_PATH}", "Connection details (SEP-2127)."),
         ("A2A agent card", f"{base}{metadata.AGENT_CARD_PATH}", f"Agent2Agent v1.0; JSON-RPC at <code>{base}{metadata.A2A_PATH}</code>."),
         ("AI catalog", f"{base}{metadata.AI_CATALOG_PATH}", "Index of the services above."),
