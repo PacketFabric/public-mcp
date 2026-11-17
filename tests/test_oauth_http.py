@@ -153,35 +153,43 @@ async def test_on_behalf_still_forwarded(oauth_app, respx_mock):
         assert sent["On-Behalf"] == "cust-1"
 
 
+async def sign_in(http, *, origin=PORTAL, verifier="v" * 43):
+    client_id = await register(http)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    location = (await authorize(http, client_id, challenge)).headers["location"]
+    request = parse_qs(urlsplit(location).query)["request"][0]
+    r = await http.post(
+        "/oauth/callback",
+        json={"request": request, "api_key": "api-user-key", "key_uuid": "u1"},
+        headers={"Origin": origin},
+    )
+    assert r.status_code == 200, r.text
+    redirect_to = r.json()["redirect_to"]
+    code = parse_qs(urlsplit(redirect_to).query)["code"][0]
+    r = await http.post("/token", data=token_form(client_id, code, verifier))
+    assert r.status_code == 200, r.text
+    return {"token": r.json(), "redirect_to": redirect_to, "code": code, "client_id": client_id, "verifier": verifier}
+
+
+def token_form(client_id, code, verifier):
+    return {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": REDIRECT,
+        "client_id": client_id,
+        "code_verifier": verifier,
+        "resource": f"{MCP_URL}/mcp",
+    }
+
+
 @respx.mock
 async def test_signed_in_token_calls_api_with_users_key(oauth_app, respx_mock):
     route = respx_mock.get(f"{PF}/v2/customers/current").mock(return_value=httpx.Response(200, json={"name": "X"}))
     async with serve(oauth_app) as http:
-        client_id = await register(http)
-        verifier, challenge = pkce()
-        location = (await authorize(http, client_id, challenge)).headers["location"]
-        request = parse_qs(urlsplit(location).query)["request"][0]
-        r = await http.post(
-            "/oauth/callback",
-            json={"request": request, "api_key": "user-minted-key", "key_uuid": "key-1"},
-            headers={"Origin": PORTAL},
-        )
-        assert r.status_code == 200, r.text
-        redirect = parse_qs(urlsplit(r.json()["redirect_to"]).query)
+        flow = await sign_in(http)
+        redirect = parse_qs(urlsplit(flow["redirect_to"]).query)
         assert redirect["iss"] == ["https://mcp.example.net"]
-        r = await http.post(
-            "/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": redirect["code"][0],
-                "redirect_uri": REDIRECT,
-                "client_id": client_id,
-                "code_verifier": verifier,
-                "resource": f"{MCP_URL}/mcp",
-            },
-        )
-        assert r.status_code == 200, r.text
-        sealed = r.json()["access_token"]
+        sealed = flow["token"]["access_token"]
         assert sealed.startswith("pfmcp_at_")
 
         auth = {"Authorization": f"Bearer {sealed}", "On-Behalf": "cust-1"}
@@ -189,7 +197,7 @@ async def test_signed_in_token_calls_api_with_users_key(oauth_app, respx_mock):
         r = await http.post("/mcp", json=CALL, headers={**HDRS, **PROTO, **auth})
         assert r.json()["result"]["isError"] is False, r.text
         sent = route.calls.last.request.headers
-        assert sent["Authorization"] == "Bearer user-minted-key"  # never the sealed token itself
+        assert sent["Authorization"] == "Bearer api-user-key"  # never the sealed token itself
         assert sent["On-Behalf"] == "cust-1"
 
 
@@ -197,6 +205,74 @@ async def test_bad_signed_in_token_gets_401(oauth_app):
     async with serve(oauth_app) as http:
         r = await http.post("/mcp", json=INIT, headers={**HDRS, "Authorization": "Bearer pfmcp_at_forged"})
         assert r.status_code == 401
+
+
+async def test_full_sign_in_from_branded_portal(oauth_app):
+    async with serve(oauth_app) as http:
+        flow = await sign_in(http, origin="https://acme.portal.example.net")
+    assert parse_qs(urlsplit(flow["redirect_to"]).query)["state"] == ["xyz"]
+    token = flow["token"]
+    assert token["token_type"] == "Bearer"
+    assert token["access_token"].startswith("pfmcp_at_")
+    assert abs(token["expires_in"] - (2_592_000 - 60)) <= 5
+    assert "refresh_token" not in token
+
+
+async def _begin(http):
+    client_id = await register(http)
+    verifier, challenge = pkce()
+    location = (await authorize(http, client_id, challenge)).headers["location"]
+    return client_id, verifier, parse_qs(urlsplit(location).query)["request"][0]
+
+
+async def test_token_wrong_verifier(oauth_app):
+    async with serve(oauth_app) as http:
+        client_id, verifier, request = await _begin(http)
+        r = await http.post(
+            "/oauth/callback",
+            json={"request": request, "api_key": "api-user-key", "key_uuid": "u1"},
+            headers={"Origin": PORTAL},
+        )
+        code = parse_qs(urlsplit(r.json()["redirect_to"]).query)["code"][0]
+        r = await http.post("/token", data=token_form(client_id, code, "w" * 43))
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_grant"
+
+
+async def test_deny_returns_state(oauth_app):
+    async with serve(oauth_app) as http:
+        _, _, request = await _begin(http)
+        r = await http.post(
+            "/oauth/callback", json={"request": request, "error": "access_denied"}, headers={"Origin": PORTAL}
+        )
+        assert r.status_code == 200, r.text
+        query = parse_qs(urlsplit(r.json()["redirect_to"]).query)
+        assert query["error"] == ["access_denied"]
+        assert query["state"] == ["xyz"]
+        assert "code" not in query
+
+
+async def test_expired_request_rejected(oauth_app, clock):
+    async with serve(oauth_app) as http:
+        _, _, request = await _begin(http)
+        clock["now"] += 601
+        r = await http.post(
+            "/oauth/callback",
+            json={"request": request, "api_key": "api-user-key", "key_uuid": "u1"},
+            headers={"Origin": PORTAL},
+        )
+        assert r.status_code == 400, r.text
+
+
+async def test_callback_foreign_origin_403(oauth_app):
+    async with serve(oauth_app) as http:
+        _, _, request = await _begin(http)
+        r = await http.post(
+            "/oauth/callback",
+            json={"request": request, "api_key": "api-user-key", "key_uuid": "u1"},
+            headers={"Origin": "https://portal.example.net.evil.com"},
+        )
+        assert r.status_code == 403, r.text
 
 
 @pytest.mark.parametrize(
@@ -260,3 +336,4 @@ def test_oauth_app_keeps_mcpserver_routes_and_debug(oauth_env, monkeypatch):
     app = build_app(public_url=MCP_URL)
     assert extra in app.router.routes
     assert app.debug is True
+
