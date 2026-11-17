@@ -337,3 +337,59 @@ def test_oauth_app_keeps_mcpserver_routes_and_debug(oauth_env, monkeypatch):
     assert extra in app.router.routes
     assert app.debug is True
 
+
+@respx.mock
+async def test_signed_in_token_calls_api_as_user(oauth_app, respx_mock):
+    route = respx_mock.get(f"{PF}/v2/customers/current").mock(return_value=httpx.Response(200, json={"name": "X"}))
+    async with serve(oauth_app) as http:
+        auth = {"Authorization": f"Bearer {(await sign_in(http))['token']['access_token']}"}
+        assert (await http.post("/mcp", json=INIT, headers={**HDRS, **auth})).status_code == 200
+        r = await http.post("/mcp", json=CALL, headers={**HDRS, **PROTO, **auth})
+        assert r.json()["result"]["isError"] is False, r.text
+    assert route.call_count == 1
+    assert route.calls.last.request.headers["Authorization"] == "Bearer api-user-key"
+
+
+@respx.mock
+async def test_tampered_token_401(oauth_app, respx_mock):
+    async with serve(oauth_app) as http:
+        sealed = (await sign_in(http))["token"]["access_token"]
+        tampered = sealed[:-1] + ("A" if sealed[-1] != "A" else "B")
+        r = await http.post("/mcp", json=INIT, headers={**HDRS, "Authorization": f"Bearer {tampered}"})
+        assert r.status_code == 401
+        assert "www-authenticate" in r.headers
+    assert not respx_mock.calls
+
+
+@respx.mock
+async def test_expired_token_401(oauth_app, respx_mock, clock):
+    async with serve(oauth_app) as http:
+        sealed = (await sign_in(http))["token"]["access_token"]
+        clock["now"] += 2_592_000
+        r = await http.post("/mcp", json=INIT, headers={**HDRS, "Authorization": f"Bearer {sealed}"})
+        assert r.status_code == 401
+        assert "www-authenticate" in r.headers
+    assert not respx_mock.calls
+
+
+@respx.mock
+async def test_code_as_access_token_401(oauth_app, respx_mock):
+    async with serve(oauth_app) as http:
+        code = (await sign_in(http))["code"]
+        r = await http.post("/mcp", json=INIT, headers={**HDRS, "Authorization": f"Bearer {code}"})
+        assert r.status_code == 401
+        assert "www-authenticate" in r.headers
+    assert not respx_mock.calls
+
+
+@respx.mock
+async def test_revoke_deletes_pf_key(oauth_app, respx_mock):
+    route = respx_mock.delete(f"{PF}/v2/api-keys/u1").mock(return_value=httpx.Response(204))
+    async with serve(oauth_app) as http:
+        flow = await sign_in(http)
+        # The SDK's revocation form declares client_secret as required even for public clients.
+        form = {"token": flow["token"]["access_token"], "client_id": flow["client_id"], "client_secret": ""}
+        r = await http.post("/revoke", data=form)
+        assert r.status_code == 200, r.text
+    assert route.call_count == 1
+    assert route.calls.last.request.headers["Authorization"] == "Bearer api-user-key"
