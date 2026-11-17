@@ -12,13 +12,14 @@ import json
 import os
 from typing import Annotated, Any, Literal
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import metadata
-from .client import PacketFabricClient, PFError, caller_credentials, credentials_from_headers
+from .client import CallerCredentials, PacketFabricClient, PFError, caller_credentials, credentials_from_headers
 from .spec import Operation, Spec
 
 ALLOW_WRITES = os.environ.get("PF_ALLOW_WRITES", "").lower() in ("1", "true", "yes", "on")
@@ -52,6 +53,11 @@ async def _caller_auth_middleware(ctx: Any, call_next: Any) -> Any:
     to this request so tool calls run as them. No-op on stdio (no headers)."""
     request = getattr(ctx, "request", None)  # Starlette Request over HTTP, None on stdio
     creds = credentials_from_headers(getattr(request, "headers", None) or getattr(ctx, "headers", None))
+    access = get_access_token()  # set only when OAuth sign-in is enabled
+    if access is not None:
+        # The verified token carries the PacketFabric key. Never use the Authorization header
+        # here: for a signed-in client it holds the sealed token, not the key.
+        creds = CallerCredentials(token=access.token, on_behalf=creds.on_behalf if creds else None)
     if creds is None:
         return await call_next(ctx)
     token = caller_credentials.set(creds)
@@ -157,6 +163,16 @@ def _split_args(op: Operation, params: dict[str, Any]) -> tuple[dict[str, Any], 
     return path_p, query_p, unknown
 
 
+SIGNED_IN_REJECTED_HINT = (
+    "Your PacketFabric sign-in has expired or been revoked. Reconnect this server in your AI client to sign in again."
+)
+
+
+def _signed_in() -> bool:
+    # Only a token from the sign-in flow carries the UUID of the API key it created.
+    return getattr(get_access_token(), "key_uuid", None) is not None
+
+
 async def _execute(
     op: Operation,
     path_params: dict[str, Any] | None = None,
@@ -180,7 +196,9 @@ async def _execute(
         except Exception:
             detail = r.text[:2000]
         err: dict[str, Any] = {"status": r.status_code, "operation_id": op.operation_id, "error": detail}
-        if r.status_code == 401:
+        if r.status_code == 401 and _signed_in():
+            err["hint"] = SIGNED_IN_REJECTED_HINT
+        elif r.status_code == 401:
             err["hint"] = "Credentials rejected. Check the API key (Authorization header, or PF_TOKEN / PF_LOGIN+PF_PASSWORD for local use)."
         elif r.status_code == 403:
             err["hint"] = "Authenticated, but this user/key lacks permission for this endpoint."

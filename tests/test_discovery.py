@@ -1,4 +1,3 @@
-import contextlib
 import json
 import re
 import tomllib
@@ -10,6 +9,8 @@ import pytest
 import respx
 
 from packetfabric_mcp import __version__, discovery, metadata
+
+from conftest import serve
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = Path(__file__).parent / "schemas"
@@ -66,6 +67,8 @@ def test_ai_catalog_shape():
 @pytest.fixture
 def app(monkeypatch):
     monkeypatch.setenv("PF_TOKEN", "operator-key")  # must NOT be used by the hosted app
+    for name in ("PF_OAUTH_SECRET", "PF_PORTAL_URL"):
+        monkeypatch.delenv(name, raising=False)
     from packetfabric_mcp import server
     from packetfabric_mcp.http_app import build_app
 
@@ -73,15 +76,6 @@ def app(monkeypatch):
     a = build_app(public_url=BASE)
     yield a
     server._client = None
-
-
-@contextlib.asynccontextmanager
-async def serve(app):
-    # Entered and exited inside the test's own task (anyio cancel scopes require it).
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8765") as c:
-            yield c
 
 
 async def test_discovery_endpoints(app):
@@ -139,7 +133,36 @@ async def test_a2a_without_key_gets_message_and_never_uses_operator_key(app):
         r = await http.post("/a2a", json=_a2a({"skill": "get_account"}), headers=A2A_HEADERS)
         result = r.json()["result"]
         assert "task" not in result  # no task is created for keyless callers
-        assert "API key" in result["message"]["parts"][0]["text"]
+        assert result["message"]["parts"][0]["text"] == metadata.AUTH_HELP
+
+
+def test_auth_help_is_the_api_key_sentence():
+    assert metadata.AUTH_HELP == "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys)."
+
+
+@pytest.mark.parametrize("token", ["pfmcp_at_x", "pfmcp_code_x", " pfmcp_at_x"])
+async def test_a2a_refuses_sign_in_tokens(app, respx_mock, token):
+    async with serve(app) as http:
+        r = await http.post(
+            "/a2a", json=_a2a({"skill": "get_account"}), headers={**A2A_HEADERS, "Authorization": f"Bearer {token}"}
+        )
+        result = r.json()["result"]
+        assert "task" not in result
+        assert result["message"]["parts"][0]["text"] == metadata.A2A_SIGN_IN_TOKEN_HELP
+    assert not respx_mock.calls
+
+
+async def test_a2a_refuses_internally_whitespaced_tokens(app, respx_mock):
+    async with serve(app) as http:
+        r = await http.post(
+            "/a2a",
+            json=_a2a({"skill": "get_account"}),
+            headers={**A2A_HEADERS, "Authorization": "Bearer x pfmcp_at_y"},
+        )
+        result = r.json()["result"]
+        assert "task" not in result
+        assert result["message"]["parts"][0]["text"] == metadata.AUTH_HELP
+    assert not respx_mock.calls
 
 
 async def test_a2a_unknown_skill_gets_help(app):
@@ -207,3 +230,48 @@ async def test_llms_txt_and_home_page(app):
         assert f'href="{BASE}/.well-known/agent-card.json"' in r.text and __version__ in r.text
         # The MCP endpoint itself is unaffected by the new root route.
         assert (await http.get("/healthz")).json()["version"] == __version__
+
+
+def test_auth_header_optional():
+    assert discovery.AUTH_HEADER["isRequired"] is False
+    assert "sign in with packetfabric" in discovery.build_home_page(BASE).lower()
+    assert "sign in with packetfabric" in discovery.build_llms_txt(BASE).lower()
+
+
+def test_server_json_header_mirrors_the_sign_in_header():
+    server = json.loads((ROOT / "server.json").read_text())
+    header = server["remotes"][0]["headers"][0]
+    assert header["description"] == discovery.AUTH_HEADER["description"]
+    assert header["isRequired"] is discovery.AUTH_HEADER["isRequired"] is False
+
+
+def test_documents_without_sign_in_ask_for_a_key():
+    card = discovery.build_server_card(BASE, oauth_enabled=False)
+    jsonschema.validate(card, json.loads((SCHEMAS / "server-card.schema.json").read_text()))
+    header = card["remotes"][0]["headers"][0]
+    assert header["isRequired"] is True
+    assert header["description"] == "Bearer <your PacketFabric API key> (portal: Settings > API Keys)"
+    llms = discovery.build_llms_txt(BASE, oauth_enabled=False)
+    assert "Authenticate every request with `Authorization: Bearer <PacketFabric API key>`." in llms
+    home = discovery.build_home_page(BASE, oauth_enabled=False)
+    assert "Send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>." in home
+    for doc in (json.dumps(card), llms, home):
+        assert "sign in" not in doc.lower()
+
+
+def test_documents_with_sign_in_offer_it():
+    card = discovery.build_server_card(BASE, oauth_enabled=True)
+    jsonschema.validate(card, json.loads((SCHEMAS / "server-card.schema.json").read_text()))
+    assert card["remotes"][0]["headers"] == [discovery.AUTH_HEADER]
+    assert "sign in with packetfabric" in discovery.build_llms_txt(BASE, oauth_enabled=True).lower()
+    assert "sign in with packetfabric" in discovery.build_home_page(BASE, oauth_enabled=True).lower()
+
+
+async def test_served_documents_without_sign_in_ask_for_a_key(app):
+    async with serve(app) as http:
+        card = (await http.get("/mcp/server-card")).json()
+        assert card["remotes"][0]["headers"][0]["isRequired"] is True
+        for path in ("/mcp/server-card", "/llms.txt", "/"):
+            r = await http.get(path)
+            assert r.status_code == 200, path
+            assert "sign in" not in r.text.lower(), path

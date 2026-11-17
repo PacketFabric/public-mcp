@@ -20,13 +20,19 @@ SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
 AGENT_CARD_MEDIA_TYPE = "application/a2a-agent-card+json"
 AI_CATALOG_MEDIA_TYPE = "application/ai-catalog+json"
 
+# server.json mirrors this one: the public hosted server offers sign-in.
 AUTH_HEADER = {
     "name": "Authorization",
-    "description": "Bearer <your PacketFabric API key> (portal: Settings > API Keys)",
-    "isRequired": True,
+    "description": "Optional. Leave unset to sign in with PacketFabric, or send Bearer <your PacketFabric API key> (portal: Settings > API Keys).",
+    "isRequired": False,
     "isSecret": True,
     "value": "Bearer {api_key}",
     "variables": {"api_key": {"description": "PacketFabric API key", "isRequired": True, "isSecret": True}},
+}
+API_KEY_AUTH_HEADER = {
+    **AUTH_HEADER,
+    "description": "Bearer <your PacketFabric API key> (portal: Settings > API Keys)",
+    "isRequired": True,
 }
 
 
@@ -34,7 +40,7 @@ def _repository() -> dict[str, str]:
     return {"url": metadata.REPOSITORY_URL, "source": "github"}
 
 
-def build_server_card(base_url: str) -> dict[str, Any]:
+def build_server_card(base_url: str, oauth_enabled: bool = True) -> dict[str, Any]:
     base = base_url.rstrip("/")
     card: dict[str, Any] = {
         "$schema": SERVER_CARD_SCHEMA,
@@ -48,7 +54,7 @@ def build_server_card(base_url: str) -> dict[str, Any]:
             {
                 "type": "streamable-http",
                 "url": base + metadata.MCP_PATH,
-                "headers": [AUTH_HEADER],
+                "headers": [AUTH_HEADER if oauth_enabled else API_KEY_AUTH_HEADER],
                 "supportedProtocolVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
             }
         ],
@@ -100,12 +106,17 @@ def etag_for(doc: Any) -> str:
     return '"' + hashlib.sha256(raw).hexdigest()[:32] + '"'
 
 
-def build_llms_txt(base_url: str) -> str:
+def build_llms_txt(base_url: str, oauth_enabled: bool = True) -> str:
     """llms.txt (https://llmstxt.org) for the MCP host: what this service is and where everything lives."""
     base = base_url.rstrip("/")
+    auth = (
+        "Sign in with PacketFabric when your client asks, or send `Authorization: Bearer <API key>`."
+        if oauth_enabled
+        else "Authenticate every request with `Authorization: Bearer <PacketFabric API key>`."
+    )
     return f"""# {metadata.TITLE} MCP and A2A
 
-> {metadata.LONG_DESCRIPTION} Authenticate every request with `Authorization: Bearer <PacketFabric API key>`.
+> {metadata.LONG_DESCRIPTION} {auth}
 
 ## For AI agents
 
@@ -127,13 +138,18 @@ def build_llms_txt(base_url: str) -> str:
 """
 
 
-def build_home_page(base_url: str) -> str:
+def build_home_page(base_url: str, oauth_enabled: bool = True) -> str:
     """Small human-readable landing page for the bare host (people arrive here from registry links)."""
     from html import escape
 
     base = escape(base_url.rstrip("/"))
+    mcp_note = (
+        "Streamable HTTP. Sign in with PacketFabric when your client asks, or send <code>Authorization: Bearer &lt;API key&gt;</code>."
+        if oauth_enabled
+        else "Streamable HTTP. Send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>."
+    )
     rows = [
-        ("MCP endpoint", f"{base}{metadata.MCP_PATH}", "Streamable HTTP. Send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>."),
+        ("MCP endpoint", f"{base}{metadata.MCP_PATH}", mcp_note),
         ("MCP server card", f"{base}{metadata.SERVER_CARD_PATH}", "Connection details (SEP-2127)."),
         ("A2A agent card", f"{base}{metadata.AGENT_CARD_PATH}", f"Agent2Agent v1.0; JSON-RPC at <code>{base}{metadata.A2A_PATH}</code>."),
         ("AI catalog", f"{base}{metadata.AI_CATALOG_PATH}", "Index of the services above."),

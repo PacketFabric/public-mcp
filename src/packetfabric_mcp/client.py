@@ -150,5 +150,14 @@ class PacketFabricClient:
             r = await self._http.request(op.method.upper(), path, headers=self._headers(token), **kwargs)
         return r
 
+    async def delete_api_key(self, token: str, key_uuid: str) -> None:
+        # Authenticates only as the key's owner: never the operator's credentials or On-Behalf.
+        r = await self._http.delete(
+            f"/v2/api-keys/{quote(key_uuid, safe='')}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if r.status_code >= 400:
+            raise PFError(f"Deleting the API key failed ({r.status_code})")
+
     async def aclose(self) -> None:
         await self._http.aclose()

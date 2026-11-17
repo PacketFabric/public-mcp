@@ -38,6 +38,10 @@ LLMS_TXT_PATH = "/llms.txt"
 AI_CATALOG_PATH = "/.well-known/ai-catalog.json"
 
 AUTH_HELP = "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys)."
+A2A_SIGN_IN_TOKEN_HELP = (
+    "Signed-in tokens don't work over A2A; send a PacketFabric API key as 'Authorization: Bearer <key>' "
+    "(portal: Settings > API Keys)."
+)
 
 
 def catalog_publisher(base_url: str) -> str:

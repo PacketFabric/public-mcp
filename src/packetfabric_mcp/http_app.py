@@ -5,9 +5,22 @@
     GET  /mcp/server-card                MCP Server Card (SEP-2127)
     GET  /.well-known/agent-card.json    A2A Agent Card          (if a2a-sdk is installed)
     POST /a2a                            A2A JSON-RPC endpoint   (if a2a-sdk is installed)
+    GET  /llms.txt, GET /                summary for language models, landing page
     GET  /healthz                        liveness
 
-Every caller authenticates with their *own* PacketFabric API key (Authorization: Bearer ...).
+With OAuth sign-in enabled (PF_OAUTH_SECRET and PF_PORTAL_URL set), also:
+
+    GET  /.well-known/oauth-authorization-server     authorization server metadata
+    GET  /.well-known/oauth-protected-resource/mcp   protected resource metadata
+    POST /register                       dynamic client registration
+    GET  /authorize                      starts sign-in; redirects to the portal
+    POST /token                          code exchange
+    POST /revoke                         token revocation (deletes the API key)
+    GET  /oauth/request                  pending sign-in details, for the portal
+    POST /oauth/callback                 the portal's approval or denial
+
+Every caller uses their *own* PacketFabric API key: pasted (Authorization: Bearer <key>) or,
+with sign-in enabled, created in their account when they sign in with PacketFabric.
 The operator's PF_TOKEN / PF_LOGIN are ignored unless PF_HTTP_USE_SERVER_CREDENTIALS=true,
 which is only appropriate for a private, single-user deployment.
 """
@@ -18,12 +31,18 @@ import logging
 import os
 from typing import Any
 
+from mcp.server.auth.provider import ProviderTokenVerifier
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
 
 from . import discovery, metadata
+from .oauth.config import OAuthConfig
+from .oauth.provider import PacketFabricOAuthProvider
+from .oauth.routes import oauth_routes
+from .oauth.seal import Sealer
 from .server import client, mcp
 
 log = logging.getLogger(__name__)
@@ -163,11 +182,37 @@ def _doc_response(request: Request, doc: Any, media_type: str) -> Response:
     return JSONResponse(doc, media_type=media_type, headers=headers)
 
 
+def _auth_settings(cfg: OAuthConfig) -> AuthSettings:
+    # Plain strings, not AnyHttpUrl: the advertised issuer must equal the `iss` the provider
+    # puts on redirects exactly (no trailing slash). Scopes stay unset because our /register
+    # replaces the SDK's and doesn't apply its scope handling.
+    return AuthSettings(
+        issuer_url=cfg.public_url,  # type: ignore[arg-type]
+        resource_server_url=cfg.resource_url,  # type: ignore[arg-type]
+        validate_token_resource=True,
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+        revocation_options=RevocationOptions(enabled=True),
+    )
+
+
+def _oauth(cfg: OAuthConfig) -> tuple[dict[str, Any], list[Route]]:
+    """SDK auth arguments for streamable_http_app, plus our own routes (which must win)."""
+    provider = PacketFabricOAuthProvider(cfg, Sealer(cfg.secrets), client())
+    sdk_args = {
+        "auth": _auth_settings(cfg),
+        "token_verifier": ProviderTokenVerifier(provider),
+        "auth_server_provider": provider,
+    }
+    return sdk_args, oauth_routes(provider, cfg)
+
+
 def build_app(
     public_url: str | None = None, enable_a2a: bool | None = None, bind_host: str = "127.0.0.1"
 ) -> Starlette:
     public_url = public_url or os.environ.get("PF_PUBLIC_URL") or None
     client().require_caller_token = not _env_true("PF_HTTP_USE_SERVER_CREDENTIALS")
+    oauth_cfg = OAuthConfig.from_env(public_url)
+    oauth_enabled = oauth_cfg is not None
 
     a2a_routes: list[Route] = []
     agent_card = None
@@ -196,7 +241,9 @@ def build_app(
 
     async def server_card(request: Request) -> Response:
         return _doc_response(
-            request, discovery.build_server_card(_base_url(request, public_url)), discovery.SERVER_CARD_MEDIA_TYPE
+            request,
+            discovery.build_server_card(_base_url(request, public_url), oauth_enabled=oauth_enabled),
+            discovery.SERVER_CARD_MEDIA_TYPE,
         )
 
     async def ai_catalog(request: Request) -> Response:
@@ -204,23 +251,37 @@ def build_app(
         return _doc_response(request, doc, discovery.AI_CATALOG_MEDIA_TYPE)
 
     async def llms_txt(request: Request) -> Response:
-        body = discovery.build_llms_txt(_base_url(request, public_url))
+        body = discovery.build_llms_txt(_base_url(request, public_url), oauth_enabled=oauth_enabled)
         return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
 
     async def home(request: Request) -> Response:
-        return HTMLResponse(discovery.build_home_page(_base_url(request, public_url)))
+        return HTMLResponse(discovery.build_home_page(_base_url(request, public_url), oauth_enabled=oauth_enabled))
 
     async def healthz(request: Request) -> Response:
         return JSONResponse({"ok": True, "version": metadata.VERSION})
 
-    app = mcp.streamable_http_app(
-        streamable_http_path=metadata.MCP_PATH,
-        stateless_http=True,  # no sticky sessions needed; scales horizontally
-        json_response=True,
-        host=bind_host,  # localhost binds get the SDK's DNS-rebinding protection
-    )
-    # Discovery routes go first so /mcp/server-card isn't swallowed by the /mcp mount.
+    http_args: dict[str, Any] = {
+        "streamable_http_path": metadata.MCP_PATH,
+        "stateless_http": True,  # no sticky sessions needed; scales horizontally
+        "json_response": True,
+        "host": bind_host,  # localhost binds get the SDK's DNS-rebinding protection
+    }
+    sign_in_routes: list[Route] = []
+    if oauth_cfg is None:
+        app = mcp.streamable_http_app(**http_args)
+    else:
+        sdk_auth_args, sign_in_routes = _oauth(oauth_cfg)
+        # MCPServer.streamable_http_app only reads auth from attributes fixed when `mcp` was
+        # created at import time, so the OAuth app is built from the low-level server directly.
+        app = mcp._lowlevel_server.streamable_http_app(
+            **http_args,
+            **sdk_auth_args,
+            custom_starlette_routes=mcp._custom_starlette_routes,
+            debug=mcp.settings.debug,
+        )
+    # Our routes go first because the first matching route wins: our /register replaces the SDK's.
     app.router.routes[0:0] = [
+        *sign_in_routes,
         Route(metadata.SERVER_CARD_PATH, server_card, methods=["GET"]),
         Route(metadata.AI_CATALOG_PATH, ai_catalog, methods=["GET"]),
         Route(metadata.LLMS_TXT_PATH, llms_txt, methods=["GET"]),

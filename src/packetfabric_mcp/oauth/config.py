@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import os
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from urllib.parse import SplitResult, urlsplit
+
+from pydantic import AnyHttpUrl
+
+from .. import metadata
+
+DEFAULT_PORTAL_ORIGINS: tuple[str, ...] = (
+    "https://portal.packetfabric.com",
+    "https://portal-beta.packetfabric.com",
+    "https://*.portal.packetfabric.com",
+)
+# Every entry must equal the redirect URI exactly: a scheme-wide entry would let anyone register
+# an arbitrary deeplink, and the SDK's /authorize error responses redirect there with no consent
+# screen. Loopback redirects are always allowed. Check these against the real clients before release.
+DEFAULT_ALLOWED_REDIRECTS: tuple[str, ...] = (
+    "https://claude.ai/api/mcp/auth_callback",
+    "https://claude.com/api/mcp/auth_callback",
+    "https://chatgpt.com/connector_platform_oauth_redirect",
+    "https://vscode.dev/redirect",
+    "cursor://anysphere.cursor-mcp/oauth/callback",
+)
+DEFAULT_KEY_TTL_SECONDS = 2_592_000
+MIN_KEY_TTL_SECONDS = 300
+
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+_LABEL = re.compile(r"[A-Za-z0-9-]+")
+# urlsplit silently strips whitespace/control characters and browsers treat "\\" as "/",
+# so anything outside printable ASCII (or containing a backslash) is refused before parsing.
+_UNSAFE = re.compile(r"[^\x21-\x7e]|\\")
+
+
+def _csv(name: str) -> tuple[str, ...]:
+    return tuple(p for p in (s.strip() for s in os.environ.get(name, "").split(",")) if p)
+
+
+@dataclass(frozen=True)
+class OAuthConfig:
+    secrets: tuple[str, ...]
+    public_url: str
+    portal_url: str
+    portal_origins: tuple[str, ...]
+    allowed_redirects: tuple[str, ...]
+    key_ttl_seconds: int
+
+    @property
+    def resource_url(self) -> str:
+        return self.public_url + metadata.MCP_PATH
+
+    @classmethod
+    def from_env(cls, public_url: str | None) -> OAuthConfig | None:
+        secrets = _csv("PF_OAUTH_SECRET")
+        portal_url = os.environ.get("PF_PORTAL_URL", "").strip()
+        if not secrets or not portal_url:
+            return None
+        public_url = (public_url or os.environ.get("PF_PUBLIC_URL", "")).strip()
+        if not public_url:
+            raise ValueError("PF_PUBLIC_URL is required when OAuth sign-in is enabled")
+        return cls(
+            secrets=secrets,
+            # Lowercased scheme and host, no default port, no trailing slash: the SDK serves this
+            # as the issuer, which clients compare exactly with the `iss` on our redirects.
+            public_url=str(AnyHttpUrl(public_url)).rstrip("/"),
+            portal_url=portal_url.rstrip("/"),
+            portal_origins=_csv("PF_PORTAL_ORIGINS") or DEFAULT_PORTAL_ORIGINS,
+            allowed_redirects=_csv("PF_OAUTH_ALLOWED_REDIRECTS") or DEFAULT_ALLOWED_REDIRECTS,
+            key_ttl_seconds=_key_ttl(),
+        )
+
+
+def _key_ttl() -> int:
+    raw = os.environ.get("PF_OAUTH_KEY_TTL_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_KEY_TTL_SECONDS
+    try:
+        ttl = int(raw)
+    except ValueError:
+        ttl = None
+    if ttl is None or ttl < MIN_KEY_TTL_SECONDS:
+        raise ValueError(f"PF_OAUTH_KEY_TTL_SECONDS must be an integer of at least {MIN_KEY_TTL_SECONDS}")
+    return ttl
+
+
+def _parse(value: str) -> SplitResult | None:
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError:
+        return None
+    return parts
+
+
+def _host_matches(pattern: str, host: str) -> bool:
+    p_labels, h_labels = pattern.lower().split("."), host.lower().split(".")
+    if len(p_labels) != len(h_labels):
+        return False
+    return all(
+        _LABEL.fullmatch(h) is not None if p == "*" else p == h
+        for p, h in zip(p_labels, h_labels)
+    )
+
+
+def origin_allowed(origin: str | None, patterns: Sequence[str]) -> bool:
+    if not origin or origin == "null" or _UNSAFE.search(origin):
+        return False
+    o = _parse(origin)
+    if o is None or not o.scheme or not o.hostname:
+        return False
+    if o.path or o.query or o.fragment or o.username is not None or o.password is not None:
+        return False
+    for pattern in patterns:
+        p = _parse(pattern)
+        if p is None or not p.hostname:
+            continue
+        if (
+            o.scheme == p.scheme
+            and o.port == p.port
+            and _host_matches(p.hostname, o.hostname)
+        ):
+            return True
+    return False
+
+
+def redirect_allowed(uri: str, allowed: Sequence[str]) -> bool:
+    if _UNSAFE.search(uri):
+        return False
+    u = _parse(uri)
+    if u is None or u.fragment or "#" in uri or not u.scheme:
+        return False
+    if u.username is not None or u.password is not None:
+        return False
+    if u.scheme in ("http", "https") and u.hostname in _LOOPBACK_HOSTS:
+        return True
+    return uri in allowed
+
+
+def redirect_display(uri: str) -> str:
+    u = urlsplit(uri)
+    authority = u.netloc.rpartition("@")[2]
+    if u.scheme in ("http", "https"):
+        return authority
+    return f"{u.scheme}://{authority}" if authority else f"{u.scheme}:"

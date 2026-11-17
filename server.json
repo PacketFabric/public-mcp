@@ -49,8 +49,8 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <your PacketFabric API key>",
-          "isRequired": true,
+          "description": "Optional. Leave unset to sign in with PacketFabric, or send Bearer <your PacketFabric API key> (portal: Settings > API Keys).",
+          "isRequired": false,
           "isSecret": true
         }
       ]
