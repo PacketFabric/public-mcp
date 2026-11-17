@@ -102,14 +102,15 @@ PF_PUBLIC_URL=https://mcp.example.com uv run packetfabric-mcp --http --host 0.0.
 | `GET /healthz` | Liveness |
 
 **Every caller uses their own PacketFabric API key**, either pasted and sent as `Authorization: Bearer <key>` (plus
-`On-Behalf: <customer uuid>` for resellers). The operator's `PF_TOKEN`/`PF_LOGIN` are ignored in HTTP mode
-unless `PF_HTTP_USE_SERVER_CREDENTIALS=true`, which is only safe for a private single-user deployment.
+`On-Behalf: <customer uuid>` for resellers), or created in their account when they sign in with PacketFabric (see
+below). The operator's `PF_TOKEN`/`PF_LOGIN` are ignored in HTTP mode unless `PF_HTTP_USE_SERVER_CREDENTIALS=true`,
+which is only safe for a private single-user deployment.
 Put it behind TLS; the discovery documents are public by design and contain no secrets.
 
 ### Sign in with PacketFabric
 
 When enabled, an AI client such as Claude, ChatGPT or Cursor can connect with no key to paste. The client opens
-the PacketFabric portal, the user signs in and approves, and the server creates an expiring PacketFabric API key
+the PacketFabric portal, the user signs in and approves, and the portal creates an expiring PacketFabric API key
 named `MCP: <app> (<date>)` in their account. The user can revoke it any time in the portal under
 Settings > API Keys. Pasted API keys keep working.
 
@@ -125,7 +126,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `PF_PORTAL_URL` | Portal base URL users sign in at (for example `https://portal.packetfabric.com`) |
 | `PF_PORTAL_ORIGINS` | Allowed portal origins, `*` wildcard for a subdomain label (default `https://portal.packetfabric.com, https://portal-beta.packetfabric.com, https://*.portal.packetfabric.com`) |
 | `PF_OAUTH_ALLOWED_REDIRECTS` | Allowed client redirect URIs, comma-separated; each must match the whole URI exactly (default: the known AI-app callbacks; loopback `http(s)://localhost`, `127.0.0.1` or `[::1]` on any port and path is always allowed) |
-| `PF_OAUTH_KEY_TTL_SECONDS` | Lifetime of the API key created per sign-in (default 2592000, 30 days) |
+| `PF_OAUTH_KEY_TTL_SECONDS` | Lifetime of the API key created per sign-in, at least 300 (default 2592000, 30 days) |
 
 The sign-in routes (`/authorize`, `/token`, `/register`, `/revoke`, `/oauth/request`, `/oauth/callback`,
 `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource/mcp`) must be reachable
@@ -138,6 +139,9 @@ Limitations:
 - Rotating `PF_OAUTH_SECRET` (put the new key first) signs everyone out of their sign-in sessions over time. Registered clients, including confidential ones with a client secret, keep working while the old key stays in the list; drop it and they must register again.
 - A revoked key keeps its token valid on this server until the token expires, but PacketFabric itself refuses the calls.
 - Revocation over `/revoke` is best-effort.
+- An authorization code can be redeemed more than once within its 5-minute lifetime (PKCE is still required).
+- Public clients (registered without a client secret) can't use `/revoke` because of how the MCP SDK handles the
+  revocation form, so their keys simply expire.
 
 The A2A agent is deterministic, not an LLM: send a DataPart `{"skill": "list_ports", "arguments": {"pop": "LAX1"}}`
 and get the API result back as a JSON data artifact. Skills mirror the MCP tools (see the agent card).

@@ -5,9 +5,22 @@
     GET  /mcp/server-card                MCP Server Card (SEP-2127)
     GET  /.well-known/agent-card.json    A2A Agent Card          (if a2a-sdk is installed)
     POST /a2a                            A2A JSON-RPC endpoint   (if a2a-sdk is installed)
+    GET  /llms.txt, GET /                summary for language models, landing page
     GET  /healthz                        liveness
 
-Every caller authenticates with their *own* PacketFabric API key (Authorization: Bearer ...).
+With OAuth sign-in enabled (PF_OAUTH_SECRET and PF_PORTAL_URL set), also:
+
+    GET  /.well-known/oauth-authorization-server     authorization server metadata
+    GET  /.well-known/oauth-protected-resource/mcp   protected resource metadata
+    POST /register                       dynamic client registration
+    GET  /authorize                      starts sign-in; redirects to the portal
+    POST /token                          code exchange
+    POST /revoke                         token revocation (deletes the API key)
+    GET  /oauth/request                  pending sign-in details, for the portal
+    POST /oauth/callback                 the portal's approval or denial
+
+Every caller uses their *own* PacketFabric API key: pasted (Authorization: Bearer <key>) or,
+with sign-in enabled, created in their account when they sign in with PacketFabric.
 The operator's PF_TOKEN / PF_LOGIN are ignored unless PF_HTTP_USE_SERVER_CREDENTIALS=true,
 which is only appropriate for a private, single-user deployment.
 """
@@ -266,8 +279,7 @@ def build_app(
             custom_starlette_routes=mcp._custom_starlette_routes,
             debug=mcp.settings.debug,
         )
-    # Our routes go first: our /register replaces the SDK's, and /mcp/server-card mustn't be
-    # swallowed by the /mcp mount.
+    # Our routes go first because the first matching route wins: our /register replaces the SDK's.
     app.router.routes[0:0] = [
         *sign_in_routes,
         Route(metadata.SERVER_CARD_PATH, server_card, methods=["GET"]),

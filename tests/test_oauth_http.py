@@ -223,6 +223,7 @@ async def test_signed_in_token_calls_api_with_users_key(oauth_app, respx_mock):
         sent = route.calls.last.request.headers
         assert sent["Authorization"] == "Bearer api-user-key"  # never the sealed token itself
         assert sent["On-Behalf"] == "cust-1"
+    assert route.call_count == 1
 
 
 SIGNED_IN_401_HINT = (
@@ -379,8 +380,28 @@ async def test_oauth_off_is_unchanged(base_env):
 def test_missing_public_url_fails_fast(oauth_env):
     from packetfabric_mcp.http_app import build_app
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="PF_PUBLIC_URL is required"):
         build_app(public_url=None)
+
+
+async def test_oauth_on_keeps_discovery_routes(oauth_app):
+    from packetfabric_mcp.oauth.routes import _REGISTER_CORS
+
+    async with serve(oauth_app) as http:
+        for path in ("/mcp/server-card", "/.well-known/ai-catalog.json", "/.well-known/agent-card.json", "/llms.txt"):
+            assert (await http.get(path)).status_code == 200, path
+        r = await http.options(
+            "/register",
+            headers={
+                "Origin": "https://client.example",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "mcp-protocol-version",
+            },
+        )
+        assert r.status_code == 204
+        allowed = r.headers["access-control-allow-headers"]
+        assert allowed == _REGISTER_CORS["Access-Control-Allow-Headers"]
+        assert "mcp-protocol-version" in allowed.lower()
 
 
 def test_sdk_contract():
@@ -406,18 +427,6 @@ def test_oauth_app_keeps_mcpserver_routes_and_debug(oauth_env, monkeypatch):
     app = build_app(public_url=MCP_URL)
     assert extra in app.router.routes
     assert app.debug is True
-
-
-@respx.mock
-async def test_signed_in_token_calls_api_as_user(oauth_app, respx_mock):
-    route = respx_mock.get(f"{PF}/v2/customers/current").mock(return_value=httpx.Response(200, json={"name": "X"}))
-    async with serve(oauth_app) as http:
-        auth = {"Authorization": f"Bearer {(await sign_in(http))['token']['access_token']}"}
-        assert (await http.post("/mcp", json=INIT, headers={**HDRS, **auth})).status_code == 200
-        r = await http.post("/mcp", json=CALL, headers={**HDRS, **PROTO, **auth})
-        assert r.json()["result"]["isError"] is False, r.text
-    assert route.call_count == 1
-    assert route.calls.last.request.headers["Authorization"] == "Bearer api-user-key"
 
 
 @respx.mock
