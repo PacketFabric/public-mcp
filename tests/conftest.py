@@ -1,6 +1,8 @@
+import contextlib
 import time
 import types
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 
@@ -48,3 +50,12 @@ def clock(monkeypatch):
     state = {"now": time.time()}
     monkeypatch.setattr(provider_mod, "time", types.SimpleNamespace(time=lambda: state["now"]))
     return state
+
+
+@contextlib.asynccontextmanager
+async def serve(app):
+    # Entered and exited inside the test's own task (anyio cancel scopes require it).
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8765") as c:
+            yield c

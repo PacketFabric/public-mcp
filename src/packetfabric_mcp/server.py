@@ -12,13 +12,14 @@ import json
 import os
 from typing import Annotated, Any, Literal
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import metadata
-from .client import PacketFabricClient, PFError, caller_credentials, credentials_from_headers
+from .client import CallerCredentials, PacketFabricClient, PFError, caller_credentials, credentials_from_headers
 from .spec import Operation, Spec
 
 ALLOW_WRITES = os.environ.get("PF_ALLOW_WRITES", "").lower() in ("1", "true", "yes", "on")
@@ -52,6 +53,11 @@ async def _caller_auth_middleware(ctx: Any, call_next: Any) -> Any:
     to this request so tool calls run as them. No-op on stdio (no headers)."""
     request = getattr(ctx, "request", None)  # Starlette Request over HTTP, None on stdio
     creds = credentials_from_headers(getattr(request, "headers", None) or getattr(ctx, "headers", None))
+    access = get_access_token()  # set only when OAuth sign-in is enabled
+    if access is not None:
+        # The verified token carries the PacketFabric key. Never use the Authorization header
+        # here: for a signed-in client it holds the sealed token, not the key.
+        creds = CallerCredentials(token=access.token, on_behalf=creds.on_behalf if creds else None)
     if creds is None:
         return await call_next(ctx)
     token = caller_credentials.set(creds)

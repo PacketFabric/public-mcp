@@ -1,4 +1,3 @@
-import contextlib
 import json
 import re
 import tomllib
@@ -10,6 +9,8 @@ import pytest
 import respx
 
 from packetfabric_mcp import __version__, discovery, metadata
+
+from conftest import serve
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = Path(__file__).parent / "schemas"
@@ -73,15 +74,6 @@ def app(monkeypatch):
     a = build_app(public_url=BASE)
     yield a
     server._client = None
-
-
-@contextlib.asynccontextmanager
-async def serve(app):
-    # Entered and exited inside the test's own task (anyio cancel scopes require it).
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8765") as c:
-            yield c
 
 
 async def test_discovery_endpoints(app):
