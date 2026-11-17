@@ -163,6 +163,16 @@ def _split_args(op: Operation, params: dict[str, Any]) -> tuple[dict[str, Any], 
     return path_p, query_p, unknown
 
 
+SIGNED_IN_REJECTED_HINT = (
+    "Your PacketFabric sign-in has expired or been revoked. Reconnect this server in your AI client to sign in again."
+)
+
+
+def _signed_in() -> bool:
+    # Only a token from the sign-in flow carries the UUID of the API key it created.
+    return getattr(get_access_token(), "key_uuid", None) is not None
+
+
 async def _execute(
     op: Operation,
     path_params: dict[str, Any] | None = None,
@@ -186,7 +196,9 @@ async def _execute(
         except Exception:
             detail = r.text[:2000]
         err: dict[str, Any] = {"status": r.status_code, "operation_id": op.operation_id, "error": detail}
-        if r.status_code == 401:
+        if r.status_code == 401 and _signed_in():
+            err["hint"] = SIGNED_IN_REJECTED_HINT
+        elif r.status_code == 401:
             err["hint"] = "Credentials rejected. Check the API key (Authorization header, or PF_TOKEN / PF_LOGIN+PF_PASSWORD for local use)."
         elif r.status_code == 403:
             err["hint"] = "Authenticated, but this user/key lacks permission for this endpoint."

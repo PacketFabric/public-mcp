@@ -225,6 +225,52 @@ async def test_signed_in_token_calls_api_with_users_key(oauth_app, respx_mock):
         assert sent["On-Behalf"] == "cust-1"
 
 
+SIGNED_IN_401_HINT = (
+    "Your PacketFabric sign-in has expired or been revoked. Reconnect this server in your AI client to sign in again."
+)
+
+
+def _hint(r):
+    import json
+
+    result = r.json()["result"]
+    assert result["isError"] is True, r.text
+    text = result["content"][0]["text"]
+    return json.loads(text[text.index("{") :])["hint"]
+
+
+@respx.mock
+async def test_revoked_key_behind_signed_in_token_asks_to_reconnect(oauth_app, respx_mock):
+    respx_mock.get(f"{PF}/v2/customers/current").mock(return_value=httpx.Response(401, json={"message": "nope"}))
+    async with serve(oauth_app) as http:
+        auth = {"Authorization": f"Bearer {(await sign_in(http))['token']['access_token']}"}
+        assert (await http.post("/mcp", json=INIT, headers={**HDRS, **auth})).status_code == 200
+        r = await http.post("/mcp", json=CALL, headers={**HDRS, **PROTO, **auth})
+        assert r.status_code == 200
+        assert _hint(r) == SIGNED_IN_401_HINT
+
+
+@respx.mock
+async def test_rejected_pasted_key_keeps_the_api_key_hint(oauth_app, respx_mock):
+    respx_mock.get(f"{PF}/v2/customers/current").mock(return_value=httpx.Response(401, json={"message": "nope"}))
+    auth = {"Authorization": "Bearer caller-key"}
+    async with serve(oauth_app) as http:
+        assert (await http.post("/mcp", json=INIT, headers={**HDRS, **auth})).status_code == 200
+        r = await http.post("/mcp", json=CALL, headers={**HDRS, **PROTO, **auth})
+        assert r.status_code == 200
+        assert _hint(r).startswith("Credentials rejected. Check the API key")
+
+
+async def test_served_documents_with_sign_in_offer_it(oauth_app):
+    async with serve(oauth_app) as http:
+        card = (await http.get("/mcp/server-card")).json()
+        assert card["remotes"][0]["headers"][0]["isRequired"] is False
+        for path in ("/mcp/server-card", "/llms.txt", "/"):
+            r = await http.get(path)
+            assert r.status_code == 200, path
+            assert "sign in with packetfabric" in r.text.lower(), path
+
+
 async def test_bad_signed_in_token_gets_401(oauth_app):
     async with serve(oauth_app) as http:
         r = await http.post("/mcp", json=INIT, headers={**HDRS, "Authorization": "Bearer pfmcp_at_forged"})

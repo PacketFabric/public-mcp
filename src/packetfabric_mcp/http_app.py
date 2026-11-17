@@ -199,6 +199,7 @@ def build_app(
     public_url = public_url or os.environ.get("PF_PUBLIC_URL") or None
     client().require_caller_token = not _env_true("PF_HTTP_USE_SERVER_CREDENTIALS")
     oauth_cfg = OAuthConfig.from_env(public_url)
+    oauth_enabled = oauth_cfg is not None
 
     a2a_routes: list[Route] = []
     agent_card = None
@@ -227,7 +228,9 @@ def build_app(
 
     async def server_card(request: Request) -> Response:
         return _doc_response(
-            request, discovery.build_server_card(_base_url(request, public_url)), discovery.SERVER_CARD_MEDIA_TYPE
+            request,
+            discovery.build_server_card(_base_url(request, public_url), oauth_enabled=oauth_enabled),
+            discovery.SERVER_CARD_MEDIA_TYPE,
         )
 
     async def ai_catalog(request: Request) -> Response:
@@ -235,11 +238,11 @@ def build_app(
         return _doc_response(request, doc, discovery.AI_CATALOG_MEDIA_TYPE)
 
     async def llms_txt(request: Request) -> Response:
-        body = discovery.build_llms_txt(_base_url(request, public_url))
+        body = discovery.build_llms_txt(_base_url(request, public_url), oauth_enabled=oauth_enabled)
         return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
 
     async def home(request: Request) -> Response:
-        return HTMLResponse(discovery.build_home_page(_base_url(request, public_url)))
+        return HTMLResponse(discovery.build_home_page(_base_url(request, public_url), oauth_enabled=oauth_enabled))
 
     async def healthz(request: Request) -> Response:
         return JSONResponse({"ok": True, "version": metadata.VERSION})

@@ -67,6 +67,8 @@ def test_ai_catalog_shape():
 @pytest.fixture
 def app(monkeypatch):
     monkeypatch.setenv("PF_TOKEN", "operator-key")  # must NOT be used by the hosted app
+    for name in ("PF_OAUTH_SECRET", "PF_PORTAL_URL"):
+        monkeypatch.delenv(name, raising=False)
     from packetfabric_mcp import server
     from packetfabric_mcp.http_app import build_app
 
@@ -234,3 +236,42 @@ def test_auth_header_optional():
     assert discovery.AUTH_HEADER["isRequired"] is False
     assert "sign in with packetfabric" in discovery.build_home_page(BASE).lower()
     assert "sign in with packetfabric" in discovery.build_llms_txt(BASE).lower()
+
+
+def test_server_json_header_mirrors_the_sign_in_header():
+    server = json.loads((ROOT / "server.json").read_text())
+    header = server["remotes"][0]["headers"][0]
+    assert header["description"] == discovery.AUTH_HEADER["description"]
+    assert header["isRequired"] is discovery.AUTH_HEADER["isRequired"] is False
+
+
+def test_documents_without_sign_in_ask_for_a_key():
+    card = discovery.build_server_card(BASE, oauth_enabled=False)
+    jsonschema.validate(card, json.loads((SCHEMAS / "server-card.schema.json").read_text()))
+    header = card["remotes"][0]["headers"][0]
+    assert header["isRequired"] is True
+    assert header["description"] == "Bearer <your PacketFabric API key> (portal: Settings > API Keys)"
+    llms = discovery.build_llms_txt(BASE, oauth_enabled=False)
+    assert "Authenticate every request with `Authorization: Bearer <PacketFabric API key>`." in llms
+    home = discovery.build_home_page(BASE, oauth_enabled=False)
+    assert "Send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>." in home
+    for doc in (json.dumps(card), llms, home):
+        assert "sign in" not in doc.lower()
+
+
+def test_documents_with_sign_in_offer_it():
+    card = discovery.build_server_card(BASE, oauth_enabled=True)
+    jsonschema.validate(card, json.loads((SCHEMAS / "server-card.schema.json").read_text()))
+    assert card["remotes"][0]["headers"] == [discovery.AUTH_HEADER]
+    assert "sign in with packetfabric" in discovery.build_llms_txt(BASE, oauth_enabled=True).lower()
+    assert "sign in with packetfabric" in discovery.build_home_page(BASE, oauth_enabled=True).lower()
+
+
+async def test_served_documents_without_sign_in_ask_for_a_key(app):
+    async with serve(app) as http:
+        card = (await http.get("/mcp/server-card")).json()
+        assert card["remotes"][0]["headers"][0]["isRequired"] is True
+        for path in ("/mcp/server-card", "/llms.txt", "/"):
+            r = await http.get(path)
+            assert r.status_code == 200, path
+            assert "sign in" not in r.text.lower(), path
