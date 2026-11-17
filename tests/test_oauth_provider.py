@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import time
 import types
 from urllib.parse import parse_qs, urlsplit
@@ -7,14 +8,22 @@ import httpx
 import pytest
 import respx
 from cryptography.fernet import Fernet
+from mcp.server.auth.handlers.authorize import AuthorizationHandler
 from mcp.server.auth.provider import AuthorizationParams, AuthorizeError, RegistrationError, TokenError
 from mcp.shared.auth import OAuthClientMetadata
 from pydantic import AnyUrl
+from starlette.applications import Starlette
+from starlette.routing import Route
 
 from packetfabric_mcp.client import PacketFabricClient, PFError
 from packetfabric_mcp.oauth import provider as provider_mod
 from packetfabric_mcp.oauth.config import DEFAULT_ALLOWED_REDIRECTS, DEFAULT_PORTAL_ORIGINS, OAuthConfig
-from packetfabric_mcp.oauth.provider import InvalidRequest, PacketFabricOAuthProvider, PFAccessToken
+from packetfabric_mcp.oauth.provider import (
+    InvalidRequest,
+    PacketFabricOAuthProvider,
+    PFAccessToken,
+    PFAuthorizationCode,
+)
 from packetfabric_mcp.oauth.seal import Sealer
 
 BASE = "https://api.packetfabric.com"
@@ -146,6 +155,43 @@ async def test_authorize_rechecks_allowlist(cfg, pf):
     with pytest.raises(AuthorizeError) as e:
         await after.authorize(client, params(redirect=old))
     assert e.value.error == "invalid_request"
+
+
+async def delisted_client(cfg, pf, redirect_uris):
+    before = dataclasses.replace(cfg, allowed_redirects=(*cfg.allowed_redirects, "https://old.example/cb"))
+    created = await PacketFabricOAuthProvider(before, Sealer(cfg.secrets), pf).create_client(
+        metadata(redirect_uris=redirect_uris)
+    )
+    return created.client_id
+
+
+async def test_get_client_drops_delisted_redirects(cfg, pf, provider):
+    client_id = await delisted_client(cfg, pf, ["https://old.example/cb", REDIRECT])
+    assert [str(u) for u in (await provider.get_client(client_id)).redirect_uris] == [REDIRECT]
+
+    only_delisted = await provider.get_client(await delisted_client(cfg, pf, ["https://old.example/cb"]))
+    assert only_delisted is not None
+    assert only_delisted.redirect_uris == []
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+async def test_authorize_endpoint_never_redirects_to_delisted_uri(cfg, pf, provider, explicit):
+    client_id = await delisted_client(cfg, pf, ["https://old.example/cb"])
+    app = Starlette(routes=[Route("/authorize", AuthorizationHandler(provider).handle, methods=["GET"])])
+    query = {
+        "response_type": "code",
+        "client_id": client_id,
+        "code_challenge": "c" * 43,
+        "code_challenge_method": "S256",
+        "state": "s",
+    }
+    if explicit:
+        query["redirect_uri"] = "https://old.example/cb"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.net") as http:
+        r = await http.get("/authorize", params=query)
+    assert r.status_code == 400
+    assert "location" not in r.headers
+    assert r.json()["error"] == "invalid_request"
 
 
 async def test_authorize_redirects_to_portal(provider):
@@ -308,6 +354,23 @@ async def test_bad_sealed_token_is_none(provider):
     assert await provider.load_access_token("pfmcp_at_garbage") is None
 
 
+@pytest.mark.parametrize("token", ["pfmcp_aT_garbage", "pfmcp_future_x", "pfmcp_"])
+async def test_unknown_pfmcp_tokens_are_not_raw_keys(provider, token):
+    assert await provider.load_access_token(token) is None
+
+
+async def test_key_never_in_repr(provider):
+    client, code = await issued_code(provider)
+    loaded = await provider.load_authorization_code(client, code)
+    token = await provider.exchange_authorization_code(client, loaded)
+    access = await provider.load_access_token(token.access_token)
+    raw = await provider.load_access_token("api-pasted")
+    for model, key in ((loaded, "api-user-key"), (access, "api-user-key"), (raw, "api-pasted")):
+        assert key not in repr(model) and key not in str(model)
+    assert isinstance(loaded, PFAuthorizationCode) and loaded.pf_key == "api-user-key"
+    assert access.token == "api-user-key" and "key_uuid='u1'" in repr(access)
+
+
 async def test_other_artifacts_are_not_raw_keys(provider):
     client, code = await issued_code(provider)
     _, req = await pending(provider)
@@ -333,10 +396,13 @@ async def test_revoke_deletes_key(provider):
 
 @respx.mock
 async def test_revoke_swallows_transport_errors_without_logging_secrets(provider, caplog):
-    route = respx.delete(f"{BASE}/v2/api-keys/u1").mock(side_effect=httpx.ConnectError("down"))
-    await provider.revoke_token(PFAccessToken(token="api-user-key", client_id="c", scopes=[], key_uuid="u1"))
+    caplog.set_level(logging.DEBUG)
+    route = respx.delete(f"{BASE}/v2/api-keys/uuid-7f3c9e").mock(side_effect=httpx.ConnectError("down"))
+    await provider.revoke_token(PFAccessToken(token="api-user-key", client_id="c", scopes=[], key_uuid="uuid-7f3c9e"))
     assert route.call_count == 1
-    assert "api-user-key" not in caplog.text and "u1" not in caplog.text
+    warnings = [r for r in caplog.records if r.name == provider_mod.__name__ and r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "api-user-key" not in caplog.text and "uuid-7f3c9e" not in caplog.text
 
 
 @respx.mock

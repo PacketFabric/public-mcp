@@ -17,15 +17,16 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
-from pydantic import AnyHttpUrl, ValidationError
+from pydantic import AnyHttpUrl, Field, ValidationError
 
 from ..client import PacketFabricClient, PFError
 from .config import OAuthConfig, redirect_allowed, redirect_display
-from .seal import PREFIXES, Sealer, is_access_token
+from .seal import Sealer, is_access_token
 
 log = logging.getLogger(__name__)
 
 RAW_KEY_CLIENT_ID = "api-key"
+_OUR_PREFIX = "pfmcp_"
 REQUEST_TTL_SECONDS = 600
 CODE_TTL_SECONDS = 300
 # Tokens lapse a minute before the key does, so a client never presents an already-dead key.
@@ -33,13 +34,17 @@ KEY_EXPIRY_MARGIN_SECONDS = 60
 
 
 class PFAuthorizationCode(AuthorizationCode):
-    pf_key: str
+    pf_key: str = Field(repr=False)
     key_uuid: str
     key_expires_at: int
 
 
 class PFAccessToken(AccessToken):
     key_uuid: str | None = None
+
+    # `token` holds the PacketFabric API key itself.
+    def __repr_args__(self) -> Any:
+        return [(k, v) for k, v in super().__repr_args__() if k != "token"]
 
 
 class InvalidRequest(Exception):
@@ -87,7 +92,13 @@ class PacketFabricOAuthProvider:
         secret = None
         if payload.get("token_endpoint_auth_method") != "none":
             secret = self.sealer.client_secret(client_id)
-        return OAuthClientInformationFull(client_id=client_id, client_secret=secret, **payload)
+        # Redirects delisted since registration are dropped, so the SDK's authorize handler refuses
+        # them with a direct 400 instead of sending its error redirect there.
+        allowed = self.config.allowed_redirects
+        redirect_uris = [u for u in payload.get("redirect_uris") or [] if redirect_allowed(u, allowed)]
+        return OAuthClientInformationFull(
+            client_id=client_id, client_secret=secret, **{**payload, "redirect_uris": redirect_uris}
+        )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         raise NotImplementedError("clients are registered through create_client")
@@ -207,8 +218,8 @@ class PacketFabricOAuthProvider:
 
     async def load_access_token(self, token: str) -> PFAccessToken | None:
         if not is_access_token(token):
-            # Another of our artifacts (e.g. a code) must not be forwarded to PacketFabric as if it were a key.
-            if token.startswith(tuple(PREFIXES.values())):
+            # Anything in our namespace (e.g. a code) must never be forwarded to PacketFabric as if it were a key.
+            if token.startswith(_OUR_PREFIX):
                 return None
             # Anything else is a PacketFabric API key pasted by the user.
             return PFAccessToken(
