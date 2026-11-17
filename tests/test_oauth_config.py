@@ -89,3 +89,29 @@ def test_from_env_empty_lists_use_defaults(monkeypatch):
     assert c.portal_origins == DEFAULT_PORTAL_ORIGINS
     assert c.allowed_redirects == DEFAULT_ALLOWED_REDIRECTS
     assert c.key_ttl_seconds == 60
+
+@pytest.mark.parametrize("uri", [
+    "http://evil.com\\@localhost/cb",
+    "http://evil.com@localhost/cb",
+    "http://user:pw@127.0.0.1/cb",
+    "http://localhost/cb\r\nX: y",
+    "http://local\nhost/cb",
+    " http://localhost/cb",
+    "http://localhost/cb\t",
+    "http://localhost/c\x00b",
+    "http://localhost/cbé",
+    "https://claude.ai/api/mcp/auth_callback\n",
+    "cursor://x@anysphere.cursor-mcp/cb",
+])
+def test_redirect_refuses_lookalikes(uri):
+    assert redirect_allowed(uri, DEFAULT_ALLOWED_REDIRECTS) is False
+
+@pytest.mark.parametrize("origin", [
+    "https://portal.packetfabric.com\n",
+    "  https://portal.packetfabric.com",
+    "https://portal.packetfabric.com\t",
+    "https://portal.packetfabric.com\\@evil.com",
+    "https://acmeK.portal.packetfabric.com",
+])
+def test_origin_refuses_lookalikes(origin):
+    assert origin_allowed(origin, DEFAULT_PORTAL_ORIGINS) is False

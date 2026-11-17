@@ -25,6 +25,9 @@ DEFAULT_KEY_TTL_SECONDS = 2_592_000
 
 _LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 _LABEL = re.compile(r"[A-Za-z0-9-]+")
+# urlsplit silently strips whitespace/control characters and browsers treat "\\" as "/",
+# so anything outside printable ASCII (or containing a backslash) is refused before parsing.
+_UNSAFE = re.compile(r"[^\x21-\x7e]|\\")
 
 
 def _csv(name: str) -> tuple[str, ...]:
@@ -84,7 +87,7 @@ def _host_matches(pattern: str, host: str) -> bool:
 
 
 def origin_allowed(origin: str | None, patterns: Sequence[str]) -> bool:
-    if not origin or origin == "null":
+    if not origin or origin == "null" or _UNSAFE.search(origin):
         return False
     o = _parse(origin)
     if o is None or not o.scheme or not o.hostname:
@@ -105,8 +108,12 @@ def origin_allowed(origin: str | None, patterns: Sequence[str]) -> bool:
 
 
 def redirect_allowed(uri: str, allowed: Sequence[str]) -> bool:
+    if _UNSAFE.search(uri):
+        return False
     u = _parse(uri)
     if u is None or u.fragment or "#" in uri or not u.scheme:
+        return False
+    if u.username is not None or u.password is not None:
         return False
     if u.scheme in ("http", "https") and u.hostname in _LOOPBACK_HOSTS:
         return True
