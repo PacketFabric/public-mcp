@@ -37,9 +37,53 @@ def test_rotation():
     assert Sealer([K2]).unseal("client", old) is None
 
 
-def test_client_secret_is_stable_per_key():
-    assert Sealer([K1]).client_secret("c1") == Sealer([K1, K2]).client_secret("c1")
-    assert Sealer([K1]).client_secret("c1") != Sealer([K2]).client_secret("c1")
+def test_client_secret_survives_rotation():
+    client_id = Sealer([K1]).seal("client", {"n": "c"}, expires_at=None)
+    secret = Sealer([K1]).client_secret(client_id)
+    assert secret
+    assert Sealer([K2, K1]).client_secret(client_id) == secret
+    assert Sealer([K2]).client_secret(client_id) is None
+
+
+def test_client_secret_uses_the_key_that_sealed_the_client():
+    a = Sealer([K1]).seal("client", {"n": "a"}, expires_at=None)
+    b = Sealer([K2]).seal("client", {"n": "b"}, expires_at=None)
+    both = Sealer([K2, K1])
+    assert both.client_secret(a) == Sealer([K1]).client_secret(a)
+    assert both.client_secret(b) == Sealer([K2]).client_secret(b)
+    assert both.client_secret(a) != both.client_secret(b)
+
+
+def test_client_secret_is_domain_separated():
+    import base64
+    import hashlib
+    import hmac
+
+    client_id = Sealer([K1]).seal("client", {"n": "c"}, expires_at=None)
+    key = base64.urlsafe_b64decode(K1)
+    old_style = hmac.new(key, client_id.encode(), hashlib.sha256).hexdigest()
+    expected = hmac.new(key, b"client-secret:" + client_id.encode(), hashlib.sha256).hexdigest()
+    assert Sealer([K1]).client_secret(client_id) == expected != old_style
+
+
+@pytest.mark.parametrize("junk", ["", "c1", "pfmcp_c_", "pfmcp_c_garbage", None, 5])
+def test_client_secret_none_for_garbage(junk):
+    assert Sealer([K1]).client_secret(junk) is None
+
+
+def test_client_secret_none_for_other_kinds():
+    s = Sealer([K1])
+    access = s.seal("access", {"n": "c"}, expires_at=None)
+    assert s.client_secret(access) is None
+    assert s.client_secret("pfmcp_c_" + access.removeprefix("pfmcp_at_")) is None
+
+
+@pytest.mark.parametrize("exp", ['"9999999999"', "1.5", "true", "[1]", "{}"])
+def test_unseal_rejects_non_int_exp(exp):
+    from cryptography.fernet import Fernet as F
+
+    body = ('{"k":"access","exp":%s,"p":{}}' % exp).encode()
+    assert Sealer([K1]).unseal("access", "pfmcp_at_" + F(K1).encrypt(body).decode(), now=1) is None
 
 
 def test_unseal_never_raises_on_garbage():

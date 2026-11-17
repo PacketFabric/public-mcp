@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import SplitResult, urlsplit
 
+from pydantic import AnyHttpUrl
+
 from .. import metadata
 
 DEFAULT_PORTAL_ORIGINS: tuple[str, ...] = (
@@ -24,6 +26,7 @@ DEFAULT_ALLOWED_REDIRECTS: tuple[str, ...] = (
     "cursor://anysphere.cursor-mcp/oauth/callback",
 )
 DEFAULT_KEY_TTL_SECONDS = 2_592_000
+MIN_KEY_TTL_SECONDS = 300
 
 _LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 _LABEL = re.compile(r"[A-Za-z0-9-]+")
@@ -58,15 +61,29 @@ class OAuthConfig:
         public_url = (public_url or os.environ.get("PF_PUBLIC_URL", "")).strip()
         if not public_url:
             raise ValueError("PF_PUBLIC_URL is required when OAuth sign-in is enabled")
-        ttl = os.environ.get("PF_OAUTH_KEY_TTL_SECONDS", "").strip()
         return cls(
             secrets=secrets,
-            public_url=public_url.rstrip("/"),
+            # Lowercased scheme and host, no default port, no trailing slash: the SDK serves this
+            # as the issuer, which clients compare exactly with the `iss` on our redirects.
+            public_url=str(AnyHttpUrl(public_url)).rstrip("/"),
             portal_url=portal_url.rstrip("/"),
             portal_origins=_csv("PF_PORTAL_ORIGINS") or DEFAULT_PORTAL_ORIGINS,
             allowed_redirects=_csv("PF_OAUTH_ALLOWED_REDIRECTS") or DEFAULT_ALLOWED_REDIRECTS,
-            key_ttl_seconds=int(ttl) if ttl else DEFAULT_KEY_TTL_SECONDS,
+            key_ttl_seconds=_key_ttl(),
         )
+
+
+def _key_ttl() -> int:
+    raw = os.environ.get("PF_OAUTH_KEY_TTL_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_KEY_TTL_SECONDS
+    try:
+        ttl = int(raw)
+    except ValueError:
+        ttl = None
+    if ttl is None or ttl < MIN_KEY_TTL_SECONDS:
+        raise ValueError(f"PF_OAUTH_KEY_TTL_SECONDS must be an integer of at least {MIN_KEY_TTL_SECONDS}")
+    return ttl
 
 
 def _parse(value: str) -> SplitResult | None:

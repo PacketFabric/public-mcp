@@ -85,12 +85,49 @@ def test_from_env_empty_lists_use_defaults(monkeypatch):
     monkeypatch.setenv("PF_PORTAL_URL", "https://portal.example.net")
     monkeypatch.setenv("PF_PORTAL_ORIGINS", " , ")
     monkeypatch.setenv("PF_OAUTH_ALLOWED_REDIRECTS", "")
-    monkeypatch.setenv("PF_OAUTH_KEY_TTL_SECONDS", "60")
+    monkeypatch.setenv("PF_OAUTH_KEY_TTL_SECONDS", "600")
     monkeypatch.setenv("PF_PUBLIC_URL", "https://mcp.example.net")
     c = OAuthConfig.from_env(None)
     assert c.portal_origins == DEFAULT_PORTAL_ORIGINS
     assert c.allowed_redirects == DEFAULT_ALLOWED_REDIRECTS
-    assert c.key_ttl_seconds == 60
+    assert c.key_ttl_seconds == 600
+
+
+@pytest.fixture
+def enabled_env(monkeypatch):
+    monkeypatch.setenv("PF_OAUTH_SECRET", "k")
+    monkeypatch.setenv("PF_PORTAL_URL", "https://portal.example.net")
+    monkeypatch.setenv("PF_PUBLIC_URL", "https://mcp.example.net")
+    monkeypatch.delenv("PF_OAUTH_KEY_TTL_SECONDS", raising=False)
+    return monkeypatch
+
+
+@pytest.mark.parametrize(
+    "raw,normalised",
+    [
+        ("https://MCP.Example.net:443/", "https://mcp.example.net"),
+        ("http://mcp.example.net:80", "http://mcp.example.net"),
+        ("https://mcp.example.net:8443/", "https://mcp.example.net:8443"),
+        ("https://mcp.example.net/base/", "https://mcp.example.net/base"),
+    ],
+)
+def test_public_url_is_normalised(enabled_env, raw, normalised):
+    enabled_env.setenv("PF_PUBLIC_URL", raw)
+    c = OAuthConfig.from_env(None)
+    assert c.public_url == normalised
+    assert c.resource_url == normalised + "/mcp"
+
+
+@pytest.mark.parametrize("ttl", ["30", "299", "abc", "1.5e6", "-300"])
+def test_key_ttl_must_be_an_integer_of_at_least_300(enabled_env, ttl):
+    enabled_env.setenv("PF_OAUTH_KEY_TTL_SECONDS", ttl)
+    with pytest.raises(ValueError, match="PF_OAUTH_KEY_TTL_SECONDS must be an integer of at least 300"):
+        OAuthConfig.from_env(None)
+
+
+def test_key_ttl_minimum_is_accepted(enabled_env):
+    enabled_env.setenv("PF_OAUTH_KEY_TTL_SECONDS", "300")
+    assert OAuthConfig.from_env(None).key_ttl_seconds == 300
 
 @pytest.mark.parametrize("uri", [
     "http://evil.com\\@localhost/cb",

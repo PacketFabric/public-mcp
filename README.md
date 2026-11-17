@@ -135,7 +135,7 @@ Limitations:
 
 - No refresh tokens: when the key expires, the client signs in again.
 - The A2A endpoint still needs a pasted API key; it has no sign-in.
-- Rotating `PF_OAUTH_SECRET` (put the new key first) signs everyone out of their sign-in sessions over time. Confidential clients (registered with a client secret) must re-register after a rotation.
+- Rotating `PF_OAUTH_SECRET` (put the new key first) signs everyone out of their sign-in sessions over time. Registered clients, including confidential ones with a client secret, keep working while the old key stays in the list; drop it and they must register again.
 - A revoked key keeps its token valid on this server until the token expires, but PacketFabric itself refuses the calls.
 - Revocation over `/revoke` is best-effort.
 

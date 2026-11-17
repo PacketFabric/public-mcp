@@ -109,6 +109,17 @@ async def test_metadata_documents(oauth_app):
         assert metadata["revocation_endpoint"] == f"{MCP_URL}/revoke"
 
 
+async def test_issuer_matches_iss_with_unnormalised_public_url(oauth_env):
+    from packetfabric_mcp.http_app import build_app
+
+    oauth_env.setenv("PF_PUBLIC_URL", "https://MCP.Example.net:443/")
+    async with serve(build_app(public_url=None)) as http:
+        issuer = (await http.get("/.well-known/oauth-authorization-server")).json()["issuer"]
+        flow = await sign_in(http)
+    assert issuer == "https://mcp.example.net"
+    assert parse_qs(urlsplit(flow["redirect_to"]).query)["iss"] == [issuer]
+
+
 def test_registration_settings_carry_no_scopes(cfg):
     from packetfabric_mcp.http_app import _auth_settings
 

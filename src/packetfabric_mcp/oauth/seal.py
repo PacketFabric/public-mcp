@@ -9,7 +9,7 @@ import time
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+from cryptography.fernet import Fernet, InvalidToken
 
 Kind = Literal["client", "request", "code", "access"]
 
@@ -57,23 +57,48 @@ class Sealer:
     def __init__(self, secrets: Sequence[str]) -> None:
         if not secrets:
             raise ValueError("at least one sealing secret is required")
-        self._fernet = MultiFernet([Fernet(k) for k in secrets])
-        self._hmac_key = base64.urlsafe_b64decode(secrets[0])
+        self._keys = [(base64.urlsafe_b64decode(k), Fernet(k)) for k in secrets]
 
     def seal(self, kind: Kind, payload: dict[str, Any], expires_at: int | None) -> str:
         body = json.dumps(
             {"k": kind, "exp": expires_at, "p": payload}, separators=(",", ":")
         )
-        return PREFIXES[kind] + self._fernet.encrypt(body.encode()).decode()
+        return PREFIXES[kind] + self._keys[0][1].encrypt(body.encode()).decode()
 
     def unseal(self, kind: Kind, token: str, now: int | None = None) -> dict[str, Any] | None:
+        opened = self._open(kind, token, now)
+        return None if opened is None else opened[1]
+
+    def client_secret(self, client_id: str) -> str | None:
+        """HMAC of the client_id under the key that sealed it, so it survives key rotation
+        for as long as the client_id itself does. None if no key unseals the client_id."""
+        opened = self._open("client", client_id, None)
+        if opened is None:
+            return None
+        return hmac.new(opened[0], b"client-secret:" + client_id.encode(), hashlib.sha256).hexdigest()
+
+    def _open(self, kind: Kind, token: str, now: int | None) -> tuple[bytes, dict[str, Any]] | None:
         # Token text is attacker-controlled: every failure returns None.
         prefix = PREFIXES[kind]
         if not isinstance(token, str) or not token.startswith(prefix):
             return None
         try:
-            body = json.loads(self._fernet.decrypt(token[len(prefix) :].encode()))
-        except (InvalidToken, ValueError, UnicodeError):
+            ciphertext = token[len(prefix) :].encode()
+        except UnicodeError:
+            return None
+        for key, fernet in self._keys:
+            try:
+                plaintext = fernet.decrypt(ciphertext)
+            except InvalidToken:
+                continue
+            except ValueError:
+                return None
+            break
+        else:
+            return None
+        try:
+            body = json.loads(plaintext)
+        except (ValueError, UnicodeError):
             return None
         if not isinstance(body, dict) or body.get("k") != kind:
             return None
@@ -86,7 +111,4 @@ class Sealer:
                 return None
             if exp <= (int(time.time()) if now is None else now):
                 return None
-        return payload
-
-    def client_secret(self, client_id: str) -> str:
-        return hmac.new(self._hmac_key, client_id.encode(), hashlib.sha256).hexdigest()
+        return key, payload
