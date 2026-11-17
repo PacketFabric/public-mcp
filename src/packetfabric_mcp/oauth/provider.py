@@ -17,6 +17,7 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from pydantic import AnyHttpUrl, ValidationError
 
 from ..client import PacketFabricClient, PFError
 from .config import OAuthConfig, redirect_allowed, redirect_display
@@ -47,6 +48,13 @@ class InvalidRequest(Exception):
 
 def _now() -> int:
     return int(time.time())
+
+
+def _same_resource(a: str, b: str) -> bool:
+    try:
+        return str(AnyHttpUrl(a)).removesuffix("/") == str(AnyHttpUrl(b)).removesuffix("/")
+    except ValidationError:
+        return False
 
 
 class PacketFabricOAuthProvider:
@@ -89,6 +97,8 @@ class PacketFabricOAuthProvider:
         # Re-checked here so removing an allowlist entry also locks out clients registered before.
         if not redirect_allowed(redirect_uri, self.config.allowed_redirects):
             raise AuthorizeError(error="invalid_request", error_description="redirect_uri is not allowed")
+        if params.resource is not None and not _same_resource(params.resource, self.config.resource_url):
+            raise AuthorizeError(error="invalid_target", error_description="unknown resource")
         expires_at = _now() + REQUEST_TTL_SECONDS
         token = self.sealer.seal(
             "request",
@@ -98,7 +108,7 @@ class PacketFabricOAuthProvider:
                 "redirect_uri_provided_explicitly": params.redirect_uri_provided_explicitly,
                 "code_challenge": params.code_challenge,
                 "state": params.state,
-                "resource": params.resource,
+                "resource": self.config.resource_url,
                 "scopes": params.scopes,
                 "expires_at": expires_at,
             },

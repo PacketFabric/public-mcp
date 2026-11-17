@@ -64,14 +64,14 @@ def metadata(**kw):
     return OAuthClientMetadata(**kw)
 
 
-def params(redirect=REDIRECT, state="xyz"):
+def params(redirect=REDIRECT, state="xyz", resource="https://mcp.example.net/mcp"):
     return AuthorizationParams(
         state=state,
         scopes=None,
         code_challenge="challenge",
         redirect_uri=AnyUrl(redirect),
         redirect_uri_provided_explicitly=True,
-        resource="https://mcp.example.net/mcp",
+        resource=resource,
     )
 
 
@@ -152,6 +152,34 @@ async def test_authorize_redirects_to_portal(provider):
     client = await provider.create_client(metadata())
     url = await provider.authorize(client, params())
     assert url.startswith("https://portal.example.net/mcp/connect?request=pfmcp_r_")
+
+
+async def access_for_resource(provider, resource):
+    client = await provider.create_client(metadata())
+    req = request_token(await provider.authorize(client, params(resource=resource)))
+    url = await provider.complete_request(req, api_key="api-user-key", key_uuid="u1")
+    code = await provider.load_authorization_code(client, parse_qs(urlsplit(url).query)["code"][0])
+    token = await provider.exchange_authorization_code(client, code)
+    return await provider.load_access_token(token.access_token)
+
+
+async def test_authorize_defaults_resource(provider):
+    assert (await access_for_resource(provider, None)).resource == "https://mcp.example.net/mcp"
+
+
+@pytest.mark.parametrize("resource", ["https://other.example/mcp", "https://mcp.example.net/other", "not a url"])
+async def test_authorize_rejects_foreign_resource(provider, resource):
+    client = await provider.create_client(metadata())
+    with pytest.raises(AuthorizeError) as e:
+        await provider.authorize(client, params(resource=resource))
+    assert e.value.error == "invalid_target"
+
+
+@pytest.mark.parametrize(
+    "resource", ["https://mcp.example.net/mcp/", "HTTPS://MCP.Example.NET/mcp", "https://mcp.example.net:443/mcp"]
+)
+async def test_authorize_accepts_trailing_slash_resource(provider, resource):
+    assert (await access_for_resource(provider, resource)).resource == "https://mcp.example.net/mcp"
 
 
 async def test_describe_request(provider):
