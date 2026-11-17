@@ -354,7 +354,10 @@ async def test_signed_in_token_calls_api_as_user(oauth_app, respx_mock):
 async def test_tampered_token_401(oauth_app, respx_mock):
     async with serve(oauth_app) as http:
         sealed = (await sign_in(http))["token"]["access_token"]
-        tampered = sealed[:-1] + ("A" if sealed[-1] != "A" else "B")
+        # Flip a character inside the Fernet body (not the base64 padding) so only the authenticated check can refuse it.
+        i = (len("pfmcp_at_") + len(sealed)) // 2
+        tampered = sealed[:i] + ("A" if sealed[i] != "A" else "B") + sealed[i + 1 :]
+        assert tampered != sealed and tampered.startswith("pfmcp_at_")
         r = await http.post("/mcp", json=INIT, headers={**HDRS, "Authorization": f"Bearer {tampered}"})
         assert r.status_code == 401
         assert "www-authenticate" in r.headers
