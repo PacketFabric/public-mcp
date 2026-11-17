@@ -115,3 +115,27 @@ def test_redirect_refuses_lookalikes(uri):
 ])
 def test_origin_refuses_lookalikes(origin):
     assert origin_allowed(origin, DEFAULT_PORTAL_ORIGINS) is False
+
+
+def test_default_allowed_redirects_exact():
+    assert DEFAULT_ALLOWED_REDIRECTS == (
+        "https://claude.ai/api/mcp/auth_callback",
+        "https://claude.com/api/mcp/auth_callback",
+        "https://chatgpt.com/connector_platform_oauth_redirect",
+        "https://vscode.dev/redirect",
+        "cursor://",
+        "vscode://",
+        "vscode-insiders://",
+    )
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://claude.com/api/mcp/auth_callback",
+        "https://vscode.dev/redirect",
+        "vscode-insiders://vscode.github-authentication/did-authenticate",
+    ],
+)
+def test_newly_allowed_redirects(uri):
+    assert redirect_allowed(uri, DEFAULT_ALLOWED_REDIRECTS) is True

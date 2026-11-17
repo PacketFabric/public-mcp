@@ -5,6 +5,7 @@ from typing import Any
 
 from mcp.server.auth.provider import RegistrationError
 from mcp.shared.auth import JWT_BEARER_GRANT_TYPE, OAuthClientMetadata
+from mcp.shared.inbound import MCP_PROTOCOL_VERSION_HEADER
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -34,7 +35,7 @@ def _invalid_metadata(description: str) -> JSONResponse:
 _REGISTER_CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": f"Accept, Accept-Language, Content-Language, Content-Type, {MCP_PROTOCOL_VERSION_HEADER}",
 }
 
 

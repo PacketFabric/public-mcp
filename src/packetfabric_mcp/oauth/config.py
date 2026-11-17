@@ -17,9 +17,12 @@ DEFAULT_PORTAL_ORIGINS: tuple[str, ...] = (
 # must match the whole URI exactly. Loopback redirects are always allowed.
 DEFAULT_ALLOWED_REDIRECTS: tuple[str, ...] = (
     "https://claude.ai/api/mcp/auth_callback",
+    "https://claude.com/api/mcp/auth_callback",
     "https://chatgpt.com/connector_platform_oauth_redirect",
+    "https://vscode.dev/redirect",
     "cursor://",
     "vscode://",
+    "vscode-insiders://",
 )
 DEFAULT_KEY_TTL_SECONDS = 2_592_000
 

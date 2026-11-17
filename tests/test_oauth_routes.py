@@ -248,3 +248,19 @@ async def test_no_key_in_responses_or_logs(http, provider, caplog):
     bodies.append(callback(http, {"request": token, "api_key": API_KEY, "key_uuid": "u1"}, origin="https://evil.example").text)
     assert API_KEY not in caplog.text
     assert all(API_KEY not in b for b in bodies)
+
+
+def test_register_preflight_allows_protocol_version_header(http):
+    r = http.options(
+        "/register",
+        headers={
+            "Origin": "https://inspector.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "mcp-protocol-version, content-type",
+        },
+    )
+    assert r.status_code == 204
+    allowed = [h.strip().lower() for h in r.headers["access-control-allow-headers"].split(",")]
+    assert {"mcp-protocol-version", "content-type", "accept"} <= set(allowed)
+    assert r.headers["access-control-allow-origin"] == "*"
+    assert r.headers["cache-control"] == "no-store"
