@@ -13,6 +13,7 @@ from urllib.parse import quote
 import httpx
 
 from . import __version__
+from .metadata import KEYLESS_NOTE
 from .spec import Operation
 
 
@@ -46,6 +47,14 @@ def credentials_from_headers(headers: Any) -> CallerCredentials | None:
     return CallerCredentials(token=token, on_behalf=on_behalf)
 
 
+# Read-only endpoints the PacketFabric API serves without credentials. A caller with no key may
+# use these; everything else still needs one. They are named one by one instead of being taken
+# from the spec's `security: []` marker, which also covers account-recovery endpoints.
+PUBLIC_OPERATIONS = frozenset({"get_pricing", "get_location_list", "get_location_list2_1"})
+# Parameters that narrow a public endpoint to one account. Never sent without a key.
+ACCOUNT_PARAMS = frozenset({"account_uuid"})
+
+
 class PacketFabricClient:
     def __init__(self, base_url: str):
         self.base_url = os.environ.get("PF_API_URL", base_url).rstrip("/")
@@ -74,6 +83,11 @@ class PacketFabricClient:
             return "login"
         return "none"
 
+    @property
+    def _has_own_credentials(self) -> bool:
+        """True when this process may send its own configured credentials for a keyless caller."""
+        return not self.require_caller_token and self.auth_mode != "none"
+
     async def _ensure_token(self, force: bool = False) -> str:
         if self._static_token:
             return self._token  # type: ignore[return-value]
@@ -82,7 +96,7 @@ class PacketFabricClient:
         if not (self._login and self._password):
             raise PFError(
                 "No PacketFabric credentials configured. Set PF_TOKEN (an API key from the portal: "
-                "Settings > API Keys) or PF_LOGIN + PF_PASSWORD."
+                "Settings > API Keys) or PF_LOGIN + PF_PASSWORD. " + KEYLESS_NOTE
             )
         async with self._lock:
             if self._token and not force:
@@ -137,10 +151,19 @@ class PacketFabricClient:
             if caller.on_behalf:
                 headers["On-Behalf"] = caller.on_behalf
             return await self._http.request(op.method.upper(), path, headers=headers, **kwargs)
+        if op.operation_id in PUBLIC_OPERATIONS and not self._has_own_credentials:
+            scoped = sorted(ACCOUNT_PARAMS & params.keys())
+            if scoped:
+                raise PFError(
+                    f"{', '.join(scoped)} asks for account-specific results, which need a PacketFabric API key. "
+                    "Leave it out, or supply a key."
+                )
+            return await self._http.request(op.method.upper(), path, **kwargs)
         if self.require_caller_token:
             raise PFError(
                 "This server needs your own PacketFabric API key. Send it as "
-                "'Authorization: Bearer <api key>' (create one in the portal under Settings > API Keys)."
+                "'Authorization: Bearer <api key>' (create one in the portal under Settings > API Keys). "
+                + KEYLESS_NOTE
             )
 
         token = await self._ensure_token()

@@ -181,6 +181,86 @@ async def test_mcp_over_http_uses_callers_key(app, respx_mock):
         assert route.calls.last.request.headers["Authorization"] == "Bearer caller-key"
 
 
+MCP_HEADERS = {
+    "Accept": "application/json, text/event-stream",
+    "Content-Type": "application/json",
+    "MCP-Protocol-Version": "2025-11-25",
+}
+
+
+def _tool_call(name, arguments=None):
+    return {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": name, "arguments": arguments or {}}}
+
+
+@respx.mock
+async def test_mcp_over_http_serves_pricing_without_a_key(app, respx_mock):
+    async with serve(app) as http:
+        route = respx_mock.get(f"{PF}/v2/billing/pricing").mock(return_value=httpx.Response(200, json=[{"mrc": "572.0"}]))
+        r = await http.post("/mcp", json=_tool_call("pf_get_pricing", {"product_type": "port"}), headers=MCP_HEADERS)
+        assert r.json()["result"]["isError"] is False, r.text
+        assert "572.0" in r.text
+        assert "authorization" not in route.calls.last.request.headers  # no key at all, not the operator's
+
+
+@respx.mock
+async def test_mcp_over_http_serves_locations_without_a_key(app, respx_mock):
+    async with serve(app) as http:
+        route = respx_mock.get(f"{PF}/v2/locations").mock(return_value=httpx.Response(200, json=[{"pop": "LAX1"}]))
+        r = await http.post("/mcp", json=_tool_call("pf_find_locations", {"pop": "LAX1"}), headers=MCP_HEADERS)
+        assert r.json()["result"]["isError"] is False, r.text
+        assert "authorization" not in route.calls.last.request.headers
+
+
+@respx.mock
+async def test_keyless_pricing_over_http_never_forwards_on_behalf(app, respx_mock):
+    async with serve(app) as http:
+        route = respx_mock.get(f"{PF}/v2/billing/pricing").mock(return_value=httpx.Response(200, json=[]))
+        r = await http.post(
+            "/mcp",
+            json=_tool_call("pf_get_pricing", {"product_type": "port"}),
+            headers={**MCP_HEADERS, "On-Behalf": "cust-uuid"},
+        )
+        assert r.json()["result"]["isError"] is False, r.text
+        sent = route.calls.last.request.headers
+        assert "authorization" not in sent and "on-behalf" not in sent
+
+
+@respx.mock
+async def test_mcp_over_http_keyless_refusal_says_what_still_works(app, respx_mock):
+    async with serve(app) as http:
+        route = respx_mock.get(f"{PF}/v2/ports").mock(return_value=httpx.Response(200, json=[]))
+        r = await http.post("/mcp", json=_tool_call("pf_list_ports"), headers=MCP_HEADERS)
+        assert r.json()["result"]["isError"] is True
+        assert "API key" in r.text and "Pricing and location lookups work without" in r.text
+        assert not route.called
+
+
+def test_server_card_marks_the_api_key_optional():
+    header = discovery.build_server_card(BASE)["remotes"][0]["headers"][0]
+    assert header["name"] == "Authorization"
+    assert header["isRequired"] is False
+    assert header["variables"]["api_key"]["isRequired"] is False
+    assert "pricing" in header["description"].lower()
+
+
+def test_server_json_marks_the_api_key_optional():
+    server = json.loads((ROOT / "server.json").read_text())
+    header = server["remotes"][0]["headers"][0]
+    assert header["name"] == "Authorization" and header["isRequired"] is False
+    token = next(v for v in server["packages"][0]["environmentVariables"] if v["name"] == "PF_TOKEN")
+    assert token["isRequired"] is False
+    for entry in (header, token):
+        assert "pricing" in entry["description"].lower()
+
+
+async def test_llms_txt_and_home_page_say_what_needs_no_key(app):
+    async with serve(app) as http:
+        for path in ("/llms.txt", "/"):
+            r = await http.get(path)
+            assert "Pricing and location lookups work without an API key" in r.text, path
+        assert "Authenticate every request" not in (await http.get("/llms.txt")).text
+
+
 async def test_legacy_agent_card_path_and_cors(app):
     async with serve(app) as http:
         new = await http.get("/.well-known/agent-card.json")

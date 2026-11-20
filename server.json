@@ -22,8 +22,8 @@
       "environmentVariables": [
         {
           "name": "PF_TOKEN",
-          "description": "PacketFabric API key (portal: Settings > API Keys)",
-          "isRequired": true,
+          "description": "PacketFabric API key (portal: Settings > API Keys). Optional: pricing and location lookups work without it",
+          "isRequired": false,
           "isSecret": true
         },
         {
@@ -49,8 +49,8 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <your PacketFabric API key>",
-          "isRequired": true,
+          "description": "Bearer <your PacketFabric API key>. Optional: pricing and location lookups work without it",
+          "isRequired": false,
           "isSecret": true
         }
       ]

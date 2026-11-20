@@ -39,6 +39,8 @@ Workflow:
 - Circuit IDs look like PF-AP-XXX-1234 (ports), PF-BC-XXX-XXX-1234 (VCs), PF-L3-CUST-1234
   (cloud routers). Locations use POP codes like LAX1, DAL2, NYC5.
 - Responses are trimmed: use `fields` and `max_items` on pf_call_endpoint to keep lists small.
+- pf_get_pricing and pf_find_locations work without an API key (list pricing only). Every other
+  call needs the user's own PacketFabric API key.
 
 Writes (create/update/delete, which can create billable services) are
 {"ENABLED" if ALLOW_WRITES else "DISABLED on this server (PF_ALLOW_WRITES is not set)"}.
@@ -424,7 +426,8 @@ async def pf_find_locations(
     fields: Fields = None,
     max_items: MaxItems = DEFAULT_MAX_ITEMS,
 ) -> str:
-    """Find PacketFabric locations / POPs (data center, address, market, status, port types)."""
+    """Find PacketFabric locations / POPs (data center, address, market, status, port types).
+    Works without an API key."""
     return await _run(
         "get_location_list", fields or ["pop", "market", "site", "city", "state", "country", "status", "vendor"],
         max_items, pop=pop, city=city, state=state, market=market, region=region, any_type=any_type,
@@ -449,7 +452,7 @@ async def pf_get_pricing(
     max_items: MaxItems = DEFAULT_MAX_ITEMS,
 ) -> str:
     """Look up list pricing (MRC/NRC) for a PacketFabric product between locations. Read-only, no order is created.
-    vcbwc = backbone virtual circuit bandwidth."""
+    vcbwc = backbone virtual circuit bandwidth. Works without an API key."""
     return await _run(
         "get_pricing", None, max_items, product_type=product_type, location_type=location_type,
         side_a=side_a, side_z=side_z, speed=speed, subscription_term=subscription_term,
