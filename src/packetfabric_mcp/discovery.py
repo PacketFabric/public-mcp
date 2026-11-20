@@ -20,13 +20,17 @@ SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
 AGENT_CARD_MEDIA_TYPE = "application/a2a-agent-card+json"
 AI_CATALOG_MEDIA_TYPE = "application/ai-catalog+json"
 
+# Optional: a caller with no key can still use the public lookups (client.PUBLIC_OPERATIONS).
 AUTH_HEADER = {
     "name": "Authorization",
-    "description": "Bearer <your PacketFabric API key> (portal: Settings > API Keys)",
-    "isRequired": True,
+    "description": (
+        "Bearer <your PacketFabric API key> (portal: Settings > API Keys). "
+        "Optional: pricing and location lookups work without it."
+    ),
+    "isRequired": False,
     "isSecret": True,
     "value": "Bearer {api_key}",
-    "variables": {"api_key": {"description": "PacketFabric API key", "isRequired": True, "isSecret": True}},
+    "variables": {"api_key": {"description": "PacketFabric API key", "isRequired": False, "isSecret": True}},
 }
 
 
@@ -105,7 +109,7 @@ def build_llms_txt(base_url: str) -> str:
     base = base_url.rstrip("/")
     return f"""# {metadata.TITLE} MCP and A2A
 
-> {metadata.LONG_DESCRIPTION} Authenticate every request with `Authorization: Bearer <PacketFabric API key>`.
+> {metadata.LONG_DESCRIPTION} {metadata.KEYLESS_NOTE} That applies to the MCP server; everything else, and every A2A request, needs `Authorization: Bearer <PacketFabric API key>`.
 
 ## For AI agents
 
@@ -133,7 +137,7 @@ def build_home_page(base_url: str) -> str:
 
     base = escape(base_url.rstrip("/"))
     rows = [
-        ("MCP endpoint", f"{base}{metadata.MCP_PATH}", "Streamable HTTP. Send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>."),
+        ("MCP endpoint", f"{base}{metadata.MCP_PATH}", f"Streamable HTTP. {escape(metadata.KEYLESS_NOTE)} For everything else, send <code>Authorization: Bearer &lt;PacketFabric API key&gt;</code>."),
         ("MCP server card", f"{base}{metadata.SERVER_CARD_PATH}", "Connection details (SEP-2127)."),
         ("A2A agent card", f"{base}{metadata.AGENT_CARD_PATH}", f"Agent2Agent v1.0; JSON-RPC at <code>{base}{metadata.A2A_PATH}</code>."),
         ("AI catalog", f"{base}{metadata.AI_CATALOG_PATH}", "Index of the services above."),

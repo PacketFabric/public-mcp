@@ -15,8 +15,8 @@ Instead of one tool per endpoint (which overwhelms the model), it exposes **16 t
 | `pf_list_point_to_point` | PTP services |
 | `pf_list_cloud_routers`, `pf_list_cloud_router_connections` | Cloud Routers and their connections |
 | `pf_list_cloud_connections` | L2 hosted / dedicated cloud connections |
-| `pf_find_locations` | POPs / data centers |
-| `pf_get_pricing` | List pricing (MRC/NRC) between locations |
+| `pf_find_locations` | POPs / data centers. No API key needed |
+| `pf_get_pricing` | List pricing (MRC/NRC) between locations. No API key needed |
 | `pf_get_traffic` | bps/pps time series for a port or a VC on a port |
 | `pf_get_maintenances` | Current/upcoming maintenance by POP or market |
 | `pf_list_api_areas` → `pf_search_endpoints` → `pf_describe_endpoint` → `pf_call_endpoint` | Reach **any** other endpoint in the spec |
@@ -26,6 +26,8 @@ Instead of one tool per endpoint (which overwhelms the model), it exposes **16 t
 - **Read-only by default.** Any POST/PUT/PATCH/DELETE is refused unless the server runs with `PF_ALLOW_WRITES=true`.
 - With writes enabled, a write call returns a **dry-run preview** first; it only executes when re-called with `confirm=true`.
 - Auth/session, MFA, signup and API-key-management endpoints are never exposed.
+- **Without an API key, only list pricing and location lookups work.** Those are the read endpoints PacketFabric
+  serves publicly; a keyless call never carries credentials and cannot ask for account-specific pricing.
 - List responses are capped (`max_items`, default 100) and can be trimmed to specific `fields`.
 
 ## Setup
@@ -39,7 +41,8 @@ uv run pytest            # offline tests
 ```
 
 Get an API key in the PacketFabric portal (Settings → API Keys). API keys work with MFA-enabled accounts;
-login/password does not.
+login/password does not. Pricing and location lookups work without one, so you can leave `PF_TOKEN` out to try
+those first.
 
 ### Claude Code
 
@@ -73,7 +76,7 @@ To allow provisioning, add `"PF_ALLOW_WRITES": "true"` to `env`. Consider a sepa
 
 | Env var | Purpose |
 |---|---|
-| `PF_TOKEN` | API key (sent as Bearer). Preferred. |
+| `PF_TOKEN` | API key (sent as Bearer). Preferred. Optional for pricing and location lookups |
 | `PF_LOGIN` / `PF_PASSWORD` | Alternative to `PF_TOKEN`; auto re-login on 401 |
 | `PF_ALLOW_WRITES` | `true` to allow create/modify/delete (each still needs `confirm=true`) |
 | `PF_ON_BEHALF` | Resellers: customer UUID sent as `On-Behalf` header |
@@ -106,10 +109,15 @@ PF_PUBLIC_URL=https://mcp.example.com uv run packetfabric-mcp --http --host 0.0.
 unless `PF_HTTP_USE_SERVER_CREDENTIALS=true`, which is only safe for a private single-user deployment.
 Put it behind TLS; the discovery documents are public by design and contain no secrets.
 
+**MCP callers with no key can still use `pf_get_pricing` and `pf_find_locations`** (and the same endpoints through
+`pf_call_endpoint`). Those requests go to PacketFabric with no credentials at all, never the operator's, and
+return list pricing only. Every other tool answers with a message asking for a key.
+
 The A2A agent is deterministic, not an LLM: send a DataPart `{"skill": "list_ports", "arguments": {"pop": "LAX1"}}`
 and get the API result back as a JSON data artifact. Skills mirror the MCP tools (see the agent card).
 A2A access is always read-only. A2A tasks are private to the API key (and `On-Behalf` customer) that created
-them; requests without a key get a plain reply and nothing is stored.
+them; requests without a key get a plain reply and nothing is stored. Unlike MCP, every A2A skill needs a key,
+including pricing and locations.
 
 ```sh
 curl -s https://mcp.example.com/a2a -H 'A2A-Version: 1.0' -H 'Content-Type: application/json' \

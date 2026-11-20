@@ -157,3 +157,84 @@ async def test_no_credentials(env, monkeypatch):
     env._client = None
     r = await call(env, "pf_get_account")
     assert r.is_error and "PF_TOKEN" in text(r)
+
+
+# ---------------------------------------------------------------- keyless (public) endpoints
+
+
+@pytest.fixture
+def keyless(env, monkeypatch):
+    monkeypatch.delenv("PF_TOKEN")
+    env._client = None
+    return env
+
+
+@respx.mock
+async def test_pricing_without_credentials_sends_no_auth(keyless):
+    route = respx.get(f"{BASE}/v2/billing/pricing").mock(return_value=httpx.Response(200, json=[{"mrc": "572.0"}]))
+    r = await call(keyless, "pf_get_pricing", {"product_type": "port", "side_a": "LAX1", "subscription_term": 1})
+    assert not r.is_error, text(r)
+    assert "572.0" in text(r)
+    req = route.calls.last.request
+    assert "authorization" not in req.headers
+    assert req.url.params["product_type"] == "port" and req.url.params["side_a"] == "LAX1"
+
+
+@respx.mock
+async def test_locations_without_credentials_sends_no_auth(keyless):
+    route = respx.get(f"{BASE}/v2/locations").mock(return_value=httpx.Response(200, json=[{"pop": "LAX1"}]))
+    r = await call(keyless, "pf_find_locations", {"pop": "LAX1"})
+    assert not r.is_error, text(r)
+    assert "authorization" not in route.calls.last.request.headers
+
+
+@respx.mock
+async def test_generic_call_reaches_public_endpoint_without_credentials(keyless):
+    route = respx.get(f"{BASE}/v2/billing/pricing").mock(return_value=httpx.Response(200, json=[]))
+    r = await call(keyless, "pf_call_endpoint", {"operation_id": "get_pricing", "params": {"product_type": "port"}})
+    assert not r.is_error, text(r)
+    assert "authorization" not in route.calls.last.request.headers
+
+
+@respx.mock
+async def test_account_pricing_is_refused_without_credentials(keyless):
+    route = respx.get(f"{BASE}/v2/billing/pricing").mock(return_value=httpx.Response(200, json=[]))
+    r = await call(
+        keyless, "pf_call_endpoint",
+        {"operation_id": "get_pricing", "params": {"product_type": "port", "account_uuid": "c25e0c64-6da7-487e-8f47-f5e744813976"}},
+    )  # fmt: skip
+    assert r.is_error and "account_uuid" in text(r) and "API key" in text(r)
+    assert not route.called
+
+
+@respx.mock
+async def test_pricing_with_a_key_still_sends_it(env):
+    route = respx.get(f"{BASE}/v2/billing/pricing").mock(return_value=httpx.Response(200, json=[]))
+    await call(env, "pf_get_pricing", {"product_type": "port"})
+    assert route.calls.last.request.headers["Authorization"] == "Bearer test-key"
+
+
+async def test_refusal_without_credentials_says_what_still_works(keyless):
+    r = await call(keyless, "pf_list_ports")
+    assert r.is_error and "PF_TOKEN" in text(r)
+    assert "Pricing and location lookups work without" in text(r)
+
+
+def test_keyless_allowlist_only_names_public_read_endpoints():
+    from packetfabric_mcp.client import PUBLIC_OPERATIONS
+    from packetfabric_mcp.spec import Spec
+
+    s = Spec.load()
+    assert PUBLIC_OPERATIONS >= {"get_pricing", "get_location_list"}
+    for op_id in PUBLIC_OPERATIONS:
+        op = s.get(op_id)
+        assert op is not None, f"{op_id} is not in the bundled spec"
+        assert op.raw.get("security") == [], f"{op_id} is no longer public in the API spec"
+        assert op.method == "get", f"{op_id} is not a plain read"
+
+
+async def test_keyless_tools_say_so_in_their_descriptions(env):
+    tools = {t.name: t for t in await env.mcp.list_tools()}
+    for name in ("pf_get_pricing", "pf_find_locations"):
+        assert "without an API key" in tools[name].description, name
+    assert "without an API key" not in tools["pf_list_ports"].description
