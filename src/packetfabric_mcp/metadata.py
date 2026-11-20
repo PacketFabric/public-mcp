@@ -38,6 +38,8 @@ LLMS_TXT_PATH = "/llms.txt"
 AI_CATALOG_PATH = "/.well-known/ai-catalog.json"
 
 AUTH_HELP = "Send your PacketFabric API key as 'Authorization: Bearer <key>' (portal: Settings > API Keys)."
+# What a caller with no key can still do over MCP (see client.PUBLIC_OPERATIONS).
+KEYLESS_NOTE = "Pricing and location lookups work without an API key."
 
 
 def catalog_publisher(base_url: str) -> str:
