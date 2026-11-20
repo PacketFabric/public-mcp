@@ -233,6 +233,33 @@ def test_keyless_allowlist_only_names_public_read_endpoints():
         assert op.method == "get", f"{op_id} is not a plain read"
 
 
+@respx.mock
+async def test_pop_lookup_includes_every_location_type(env):
+    # Many POPs exist only as campus or metro-extension sites, which the API hides unless any_type is set.
+    route = respx.get(f"{BASE}/v2/locations").mock(
+        return_value=httpx.Response(200, json=[{"pop": "AMS5", "type": "campus", "site": "Equinix AM5"}])
+    )
+    r = await call(env, "pf_find_locations", {"pop": "AMS5"})
+    params = route.calls.last.request.url.params
+    assert params["pop"] == "AMS5" and params["any_type"] == "true"
+    # One POP can come back as several sites of different types, so the type is kept in the output.
+    assert json.loads(text(r))["data"][0]["type"] == "campus"
+
+
+@respx.mock
+async def test_pop_lookup_respects_explicit_any_type_false(env):
+    route = respx.get(f"{BASE}/v2/locations").mock(return_value=httpx.Response(200, json=[]))
+    await call(env, "pf_find_locations", {"pop": "AMS5", "any_type": False})
+    assert route.calls.last.request.url.params["any_type"] == "false"
+
+
+@respx.mock
+async def test_market_search_keeps_the_api_default(env):
+    route = respx.get(f"{BASE}/v2/locations").mock(return_value=httpx.Response(200, json=[]))
+    await call(env, "pf_find_locations", {"market": "LAX"})
+    assert "any_type" not in route.calls.last.request.url.params
+
+
 async def test_keyless_tools_say_so_in_their_descriptions(env):
     tools = {t.name: t for t in await env.mcp.list_tools()}
     for name in ("pf_get_pricing", "pf_find_locations"):

@@ -419,7 +419,10 @@ async def pf_find_locations(
     state: str | None = None,
     market: Annotated[str | None, Field(description="Market code, e.g. LAX.")] = None,
     region: Annotated[str | None, Field(description="Region short name, e.g. US, UK.")] = None,
-    any_type: Annotated[bool | None, Field(description="Include non-primary location types.")] = None,
+    any_type: Annotated[
+        bool | None,
+        Field(description="Include non-primary location types (campus, metro extension). Defaults to true when `pop` is given."),
+    ] = None,
     near_cloud_router: bool | None = None,
     ipsec_capable: bool | None = None,
     nat_capable: bool | None = None,
@@ -428,8 +431,12 @@ async def pf_find_locations(
 ) -> str:
     """Find PacketFabric locations / POPs (data center, address, market, status, port types).
     Works without an API key."""
+    if pop and any_type is None:
+        # The API returns only primary sites by default, and many POPs exist only as campus or
+        # metro-extension sites, so a lookup by POP code would otherwise come back empty.
+        any_type = True
     return await _run(
-        "get_location_list", fields or ["pop", "market", "site", "city", "state", "country", "status", "vendor"],
+        "get_location_list", fields or ["pop", "type", "market", "site", "city", "state", "country", "status", "vendor"],
         max_items, pop=pop, city=city, state=state, market=market, region=region, any_type=any_type,
         near_cloud_router=near_cloud_router, ipsec_capable=ipsec_capable, nat_capable=nat_capable,
     )  # fmt: skip
