@@ -159,7 +159,7 @@ Branches: `dev` (default) takes every change. Each push to it publishes the cont
 3. Production (`https://mcp.packetfabric.com`) runs the newest release: it picks up the new `vX.Y.Z` image within
    minutes of `image.yml` publishing it. Pushing a release tag on `main` is therefore a production deploy.
 4. The registry entry lists the hosted endpoint `https://mcp.packetfabric.com/mcp` (in `server.json`; the repo
-   variable `MCP_PUBLIC_URL` overrides it if set).
+   variable `MCP_PUBLIC_URL` overrides its URL if set, and its headers always come from `server.json`).
 
 One-time: add a PyPI Trusted Publisher for `packetfabric-mcp` (repo `PacketFabric/public-mcp`, workflow
 `publish.yml`, environment `pypi`). The `mcp-name:` comment at the top of this README is how the registry verifies
