@@ -1,6 +1,6 @@
 [project]
 name = "packetfabric-mcp"
-version = "0.2.7"
+version = "0.2.8"
 description = "MCP server for the PacketFabric NaaS API"
 readme = "README.md"
 license = "MPL-2.0"
