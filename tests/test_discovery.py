@@ -1,6 +1,9 @@
 import contextlib
 import json
+import os
 import re
+import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -35,6 +38,37 @@ def test_server_json_matches_metadata_and_schema():
     assert server["title"] == metadata.TITLE
     assert server["packages"][0]["identifier"] == metadata.PYPI_PACKAGE
     jsonschema.validate(server, json.loads((SCHEMAS / "server.schema.json").read_text()))
+
+
+def _publish_step(name):
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "publish.yml").read_text())
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            if step.get("name") == name:
+                return step
+    raise AssertionError(f"publish.yml has no step named {name!r}")
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq, which the publish workflow uses")
+def test_publish_override_keeps_endpoint_headers(tmp_path):
+    # With MCP_PUBLIC_URL set, the publish workflow rewrites the hosted endpoint in server.json.
+    # It must change only the URL: the headers (for example, whether the API key is required) come
+    # from server.json.
+    step = _publish_step("Add hosted endpoint to server.json")
+    original = json.loads((ROOT / "server.json").read_text())
+    (tmp_path / "server.json").write_text(json.dumps(original))
+    subprocess.run(
+        ["bash", "-e", "-c", step["run"]], cwd=tmp_path, check=True, capture_output=True,
+        env={"PATH": os.environ["PATH"], "URL": "https://mcp.example.net/"},
+    )  # fmt: skip
+    published = json.loads((tmp_path / "server.json").read_text())
+    assert [r["url"] for r in published["remotes"]] == ["https://mcp.example.net/mcp"]
+    assert published["remotes"][0]["headers"] == original["remotes"][0]["headers"]
+    assert {k: v for k, v in published.items() if k != "remotes"} == {
+        k: v for k, v in original.items() if k != "remotes"
+    }
 
 
 def test_readme_has_registry_ownership_marker():

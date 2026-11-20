@@ -13,7 +13,8 @@
 #  - MCP Registry: nothing; GitHub OIDC from the PacketFabric org proves the
 #    io.github.PacketFabric/* namespace.
 #  - The hosted endpoint (https://mcp.packetfabric.com/mcp) is listed in server.json itself.
-#    The repo variable MCP_PUBLIC_URL, if set, overrides it at publish time.
+#    The repo variable MCP_PUBLIC_URL, if set, overrides its URL at publish time; its headers
+#    always come from server.json.
 name: Publish
 on:
   push:
@@ -69,12 +70,10 @@ jobs:
         if: vars.MCP_PUBLIC_URL != ''
         env:
           URL: ${{ vars.MCP_PUBLIC_URL }}
+        # Only the URL changes; the endpoint's headers come from server.json. tests/test_discovery.py
+        # runs this step against server.json.
         run: |
-          jq --arg url "${URL%/}/mcp" '.remotes = [{
-              type: "streamable-http", url: $url,
-              headers: [{name: "Authorization", description: "Bearer <your PacketFabric API key>",
-                         isRequired: true, isSecret: true}]
-            }]' server.json > server.tmp && mv server.tmp server.json
+          jq --arg url "${URL%/}/mcp" '.remotes |= map(.url = $url)' server.json > server.tmp && mv server.tmp server.json
           cat server.json
       - name: Install mcp-publisher
         run: |
